@@ -62,24 +62,40 @@ func (a *App) runPublish(yes bool, note string) error {
 		if proposalSlug(doc) == "" {
 			continue
 		}
-		local, readErr := w.ReadLocal(doc.Slug)
+		// A local variant is what gets proposed when there is one — it is the
+		// version the developer is actually running.
+		local, baseDigest, readErr := publishableContent(w, doc)
 		if readErr != nil {
 			return exitf(ExitError, "read %s: %v", doc.Filename, readErr)
 		}
-		classification := w.State.Classify(doc.Slug, local, doc.Digest)
-		if classification != state.Drifted && classification != state.Conflicted {
-			continue
+		beta := w.State.BetaFor(doc.Slug)
+		if beta == nil {
+			classification := w.State.Classify(doc.Slug, local, doc.Digest)
+			if classification != state.Drifted && classification != state.Conflicted {
+				continue
+			}
+			if classification == state.Conflicted {
+				fmt.Fprintf(a.Stdout, "%s: remote moved since your sync — your proposal will be "+
+					"flagged stale for the reviewer (`fulcrum merge` fixes that).\n", doc.Filename)
+			}
+		} else {
+			if local == nil {
+				continue
+			}
+			// Already-proposed variants stay quiet, same as any other doc.
+			if w.State.Classify(doc.Slug, local, doc.Digest) == state.Proposed {
+				continue
+			}
+			if betaNeedsMerge(w, doc) {
+				fmt.Fprintf(a.Stdout, "%s: your variant is behind the current version — it will be "+
+					"flagged stale (`fulcrum merge` fixes that).\n", beta.Filename)
+			}
 		}
 
 		if diffx.HasConflictMarkers(local) {
 			fmt.Fprintf(a.Stdout, "%s: unresolved conflict markers — resolve them, nothing submitted\n",
 				doc.Filename)
 			continue
-		}
-
-		if classification == state.Conflicted {
-			fmt.Fprintf(a.Stdout, "%s: remote moved since your sync — your proposal will be "+
-				"flagged stale for the reviewer (`fulcrum merge` fixes that).\n", doc.Filename)
 		}
 
 		if !yes && !a.confirm(fmt.Sprintf("Publish your edits to %s as a proposal?", doc.Filename)) {
@@ -106,13 +122,6 @@ func (a *App) runPublish(yes bool, note string) error {
 				continue
 			}
 			document = map[string]any{"content": string(local)}
-		}
-
-		baseDigest := ""
-		if recorded := w.State.Document(doc.Slug); recorded != nil {
-			// The digest recorded AT LAST SYNC, never the current manifest's —
-			// this is what keeps based_on_current truthful. Do not "fix" it.
-			baseDigest = recorded.RemoteDigest
 		}
 
 		receipt, err := client.SubmitProposal(background(), proposalSlug(doc), document, baseDigest, docNote)

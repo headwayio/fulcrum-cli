@@ -58,11 +58,18 @@ func (a *App) runMerge(only string) error {
 		if readErr != nil {
 			return exitf(ExitError, "read %s: %v", doc.Filename, readErr)
 		}
-		if w.State.Classify(doc.Slug, local, doc.Digest) != state.Conflicted {
+
+		// A local variant merges the team's newer version into itself; a
+		// plain document merges the server's into the working file. Same
+		// three-way merge either way, different pair of sides.
+		hasBeta := w.State.BetaFor(doc.Slug) != nil
+		if hasBeta && !betaNeedsMerge(w, doc) {
 			continue
 		}
-		base := w.Base(doc.Slug)
-		if base == nil {
+		if !hasBeta && w.State.Classify(doc.Slug, local, doc.Digest) != state.Conflicted {
+			continue
+		}
+		if !hasBeta && w.Base(doc.Slug) == nil {
 			fmt.Fprintf(a.Stderr, "%s: no pristine base — sync once with this client, then merge\n", doc.Filename)
 			continue
 		}
@@ -71,18 +78,30 @@ func (a *App) runMerge(only string) error {
 		if docErr != nil {
 			return wrapAPIError(docErr)
 		}
-		content, conflicts := diffx.Merge3(base, local, res.Body)
-		if err := w.AdoptMerge(doc, res.Body, content); err != nil {
-			return exitf(ExitError, "write %s: %v", doc.Filename, err)
+
+		var conflicts int
+		target := doc.Filename
+		if hasBeta {
+			target = w.State.BetaFor(doc.Slug).Filename
+			conflicts, err = mergeBeta(w, doc, res.Body)
+			if err != nil {
+				return exitf(ExitError, "%v", err)
+			}
+		} else {
+			var content []byte
+			content, conflicts = diffx.Merge3(w.Base(doc.Slug), local, res.Body)
+			if err := w.AdoptMerge(doc, res.Body, content); err != nil {
+				return exitf(ExitError, "write %s: %v", doc.Filename, err)
+			}
 		}
 
 		merged++
 		if conflicts > 0 {
 			conflicted++
 			fmt.Fprintf(a.Stdout, "merged %s with %d conflict(s) — markers written, resolve them before publishing\n",
-				doc.Filename, conflicts)
+				target, conflicts)
 		} else {
-			fmt.Fprintf(a.Stdout, "merged %s cleanly — now drifted against the current version\n", doc.Filename)
+			fmt.Fprintf(a.Stdout, "merged %s cleanly — now based on the current version\n", target)
 		}
 	}
 

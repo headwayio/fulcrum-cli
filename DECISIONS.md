@@ -9,6 +9,27 @@ everywhere under the `charm.land` module paths. **Never straddle**: no v1
 charm dependency may enter the graph, and any future major bump migrates the
 whole set in one change.
 
+## 2026-07-29 — Experimenting is a beta beside the canonical, not a conflict
+
+A developer trying something out used to have one option: leave the document
+dirty. Sync then skipped it, so the team's updates never landed, the merge
+base rotted, and the row sat in `CONFLICTED` — a state that means *resolve me
+now*, which an experiment is not.
+
+A local variant splits the two roles the file was serving. The canonical
+document keeps syncing, always clean, always current. `<name>.beta.md` is the
+developer's, and it is what installs into projects — **under the canonical
+name**, so a harness still sees exactly one skill by that name. Two skills
+with overlapping purpose in one context window is how you get an agent that
+follows neither, which is why a renamed side-by-side variant is deliberately
+*not* what this does; `fulcrum skills new` covers that case.
+
+The variant carries its own merge base (the canonical it forked from), so
+`fulcrum merge` pulls the team's newer version into it and publishing sends a
+truthful `base_digest` however far the canonical has moved. `status` exits 1
+only when the canonical has moved past the variant — running your own version
+is a choice, not staleness; the team moving is the thing worth acting on.
+
 ## 2026-07-29 — The workspace is not a git repo
 
 Sync state is three content snapshots plus SHA-256 digests: the pristine copy

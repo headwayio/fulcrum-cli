@@ -148,6 +148,48 @@ func TestResolvedProposalStopsPinning(t *testing.T) {
 	}
 }
 
+// Betas and installs are additive: a workspace that uses neither writes the
+// same bytes the Ruby client always wrote.
+func TestAdditiveKeysStayAbsentWhenUnused(t *testing.T) {
+	s := New()
+	s.RecordSync("x", "x.json", "d1", []byte("a"))
+	encoded := string(s.Encode())
+	if bytes.Contains([]byte(encoded), []byte("betas")) || bytes.Contains([]byte(encoded), []byte("installs")) {
+		t.Errorf("unused keys must be omitted:\n%s", encoded)
+	}
+
+	s.RecordBeta("x", "x.beta.json", "d1")
+	if !bytes.Contains(s.Encode(), []byte(`"betas"`)) {
+		t.Error("a recorded beta must be written")
+	}
+}
+
+func TestBetaLifecycle(t *testing.T) {
+	s := New()
+	if s.BetaFor("x") != nil {
+		t.Fatal("no beta expected yet")
+	}
+
+	s.RecordBeta("x", "x.beta.md", "digest-1")
+	beta := s.BetaFor("x")
+	if beta == nil || beta.Filename != "x.beta.md" || beta.BaseDigest != "digest-1" {
+		t.Fatalf("beta = %+v", beta)
+	}
+
+	// Re-basing updates in place rather than stacking duplicates.
+	s.RecordBeta("x", "x.beta.md", "digest-2")
+	if len(s.Betas) != 1 || s.BetaFor("x").BaseDigest != "digest-2" {
+		t.Errorf("betas = %+v", s.Betas)
+	}
+
+	if !s.DropBeta("x") || s.BetaFor("x") != nil {
+		t.Error("drop must remove the variant")
+	}
+	if s.DropBeta("x") {
+		t.Error("dropping twice must report nothing to drop")
+	}
+}
+
 // A missing state file is an empty state, matching the Ruby loader.
 func TestLoadMissingFile(t *testing.T) {
 	s, err := Load(t.TempDir())

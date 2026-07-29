@@ -51,6 +51,10 @@ type statusRow struct {
 	State        string `json:"state"`
 	Label        string `json:"-"`
 	RemoteDigest string `json:"remote_digest,omitempty"`
+	// Beta names the local variant standing in for this document, when one
+	// is; CanonicalMoved says the team has advanced past it.
+	Beta           string `json:"beta,omitempty"`
+	CanonicalMoved bool   `json:"canonical_moved,omitempty"`
 }
 
 type statusReport struct {
@@ -94,17 +98,25 @@ func (a *App) runStatus(asJSON, withDiff bool) error {
 
 	stale := false
 	for _, row := range rows {
-		label := a.rowLabel(w, row)
-		if row.Classification != state.Synced && row.Classification != state.Proposed {
-			stale = true
-		}
-		report.Documents = append(report.Documents, statusRow{
+		entry := statusRow{
 			Slug:         row.Slug,
 			Filename:     row.Filename,
 			State:        string(row.Classification),
-			Label:        label,
+			Label:        a.rowLabel(w, row),
 			RemoteDigest: row.RemoteDigest,
-		})
+		}
+		switch {
+		case row.Beta != nil:
+			// Running your own version is a choice, not staleness — but the
+			// team moving past it is something to act on.
+			entry.State = "beta"
+			entry.Beta = row.Beta.Filename
+			entry.CanonicalMoved = row.Beta.CanonicalMoved
+			stale = stale || row.Beta.CanonicalMoved
+		case row.Classification != state.Synced && row.Classification != state.Proposed:
+			stale = true
+		}
+		report.Documents = append(report.Documents, entry)
 	}
 
 	if asJSON {
@@ -165,6 +177,14 @@ func (a *App) printDiffs(w *workspace.Workspace, rows []workspace.DocStatus) {
 
 // rowLabel names reconciled proposal outcomes instead of a bare drift.
 func (a *App) rowLabel(w *workspace.Workspace, row workspace.DocStatus) string {
+	// A local variant is the answer to "what am I running", so it replaces
+	// the canonical's state on the row rather than sitting beside it.
+	if row.Beta != nil {
+		if row.Beta.CanonicalMoved {
+			return "beta " + row.Beta.Filename + " (yours; the team's has moved — merge)"
+		}
+		return "beta " + row.Beta.Filename + " (yours; based on the current version)"
+	}
 	if row.Classification == state.Drifted || row.Classification == state.Conflicted {
 		if local, err := w.ReadLocal(row.Slug); err == nil && local != nil {
 			if p := w.State.ResolvedProposalFor(row.Slug, state.HexSHA256(local)); p != nil {

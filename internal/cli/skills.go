@@ -13,7 +13,7 @@ func (a *App) skillsCmd() *cobra.Command {
 		Use:   "skills",
 		Short: "Work with the org's synced skill documents",
 	}
-	cmd.AddCommand(a.skillsInstallCmd(), a.skillsNewCmd())
+	cmd.AddCommand(a.skillsInstallCmd(), a.skillsNewCmd(), a.skillsBetaCmd())
 	return cmd
 }
 

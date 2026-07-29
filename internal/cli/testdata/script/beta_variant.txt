@@ -1,0 +1,78 @@
+# The experiment workflow: I have local changes I am trying out, the server
+# has moved on, and I want to keep using mine for now. The document splits —
+# my version becomes the beta and keeps installing into projects, while the
+# canonical one follows the team again so I never go blind on upstream.
+
+fulcrum sync
+fulcrum skills install $WORK/proj
+
+# My experiment, unpublished.
+cp mine.md skills/skill-corpus-writing-specs.md
+fulcrum -code 1 status
+grep 'drifted' last-stdout.txt
+
+fulcrum skills beta skill-corpus-writing-specs
+grep 'skill-corpus-writing-specs.beta.md' last-stdout.txt
+grep 'follows the team again' last-stdout.txt
+
+# Two files now: mine, and the canonical restored to the server's version.
+cmp skills/skill-corpus-writing-specs.beta.md mine.md
+cmp skills/skill-corpus-writing-specs.md $CORPUS/documents/skill-corpus-writing-specs.md
+
+# The row reports what I am running — not a conflict, not a drift.
+fulcrum status
+grep 'beta skill-corpus-writing-specs.beta.md' last-stdout.txt
+grep 'based on the current version' last-stdout.txt
+
+# Mine is what agents load, under the canonical name — one skill per name.
+fulcrum skills install $WORK/proj
+grep 'Mine, still cooking.' proj/.claude/skills/corpus-writing-specs/SKILL.md
+grep 'Mine, still cooking.' proj/.skills/corpus-writing-specs/SKILL.md
+grep 'Mine, still cooking.' proj/AGENTS.md
+! exists proj/.claude/skills/corpus-writing-specs.beta
+
+# The team moves on. Sync is no longer blocked: the canonical updates, my
+# variant is untouched, and every harness keeps running mine.
+srv edit skill-corpus-writing-specs 'per example; shared setup in let blocks.' 'per example. Theirs moved on.'
+fulcrum sync
+grep 'synced skill-corpus-writing-specs.md' last-stdout.txt
+cmp skills/skill-corpus-writing-specs.beta.md mine.md
+grep 'Mine, still cooking.' proj/AGENTS.md
+grep 'Theirs moved on.' skills/skill-corpus-writing-specs.md
+
+fulcrum -code 1 status
+grep 'has moved . merge' last-stdout.txt
+
+# Merge brings their change into mine, keeping both.
+fulcrum merge
+grep 'merged skill-corpus-writing-specs.beta.md cleanly' last-stdout.txt
+grep 'Mine, still cooking.' skills/skill-corpus-writing-specs.beta.md
+grep 'Theirs moved on.' skills/skill-corpus-writing-specs.beta.md
+fulcrum status
+grep 'based on the current version' last-stdout.txt
+
+# Publishing proposes MY version as the team's next one.
+fulcrum publish --yes --note my-experiment-worked
+grep 'Proposal #101 submitted' last-stdout.txt
+srv count 1
+
+# Dropping hands authority back, keeping my text.
+fulcrum skills beta skill-corpus-writing-specs --drop
+grep 'your text is kept at' last-stdout.txt
+! exists skills/skill-corpus-writing-specs.beta.md
+exists skills/.fulcrum/discarded/skill-corpus-writing-specs.beta.md
+fulcrum status
+! grep 'beta' last-stdout.txt
+
+-- mine.md --
+---
+name: corpus-writing-specs
+description: How this team writes request specs.
+---
+
+# corpus-writing-specs
+
+Name the behavior, not the implementation. One expectation of intent
+per example; shared setup in let blocks.
+
+Mine, still cooking.

@@ -101,6 +101,18 @@ func (s *listScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		return s, s.refreshCmd()
 
+	case betaChangedMsg:
+		if msg.err != nil {
+			s.app.status = errStyle.Render(errorLine(msg.err))
+			return s, nil
+		}
+		if msg.dropped {
+			s.app.status = okStyle.Render("variant dropped — kept at " + msg.filename)
+		} else {
+			s.app.status = okStyle.Render(msg.filename + " is yours now — e to edit, p to propose")
+		}
+		return s, s.refreshCmd()
+
 	case editorFinishedMsg:
 		if msg.err != nil {
 			s.app.status = errStyle.Render("editor: " + msg.err.Error())
@@ -205,6 +217,29 @@ func (s *listScreen) handleKey(key string) (screen, tea.Cmd) {
 		s.discarding = &row
 		s.app.status = warnStyle.Render("discard your edits to " + row.Filename + "? y / any other key")
 		return s, nil
+	case "b":
+		if len(rows) == 0 {
+			return s, nil
+		}
+		row := rows[s.cursor]
+		if s.offline() {
+			s.app.status = "offline — starting a variant needs the server"
+			return s, nil
+		}
+		deps := s.app.deps
+		slug := row.Slug
+		if row.Beta != nil {
+			s.app.status = "dropping your variant…"
+			return s, func() tea.Msg {
+				kept, err := deps.DropBeta(slug)
+				return betaChangedMsg{filename: kept, dropped: true, err: err}
+			}
+		}
+		s.app.status = "starting your variant…"
+		return s, func() tea.Msg {
+			filename, err := deps.StartBeta(slug)
+			return betaChangedMsg{filename: filename, err: err}
+		}
 	case "n":
 		if s.offline() {
 			s.app.status = "offline — drafting a skill needs the server"
@@ -330,6 +365,11 @@ func (s *listScreen) view() string {
 		if row.Outcome != "" {
 			label = outcomeBadge(row.Outcome, row.OutcomeID)
 		}
+		// A local variant answers "what am I running", so it takes the row's
+		// state rather than sitting beside it.
+		if row.Beta != nil {
+			label = betaBadge(row.Beta.CanonicalMoved)
+		}
 		if row.Draft {
 			label += dimStyle.Render("  · draft (only you)")
 		}
@@ -350,15 +390,24 @@ func (s *listScreen) hints(row Row) string {
 		state.Missing:    "—",
 		state.Unsynced:   "—",
 	}[row.Classification]
-	hints := []string{"enter " + enterVerb, "e edit", "n new skill", "s sync", "r refresh", "f push-facts", "q quit"}
+	// What this row can do, then the always-there few. The full key list is
+	// behind ? — a hint line that wraps at 80 columns is a hint line nobody
+	// reads.
+	var hints []string
+	switch {
+	case row.Beta != nil:
+		if row.Beta.CanonicalMoved {
+			hints = append(hints, "m merge theirs in")
+		}
+		hints = append(hints, "b drop variant")
+	case row.Classification == state.Conflicted:
+		hints = append(hints, "m merge", "b keep as mine", "x discard mine")
+	case hasLocalEdits(row.Classification):
+		hints = append(hints, "b keep as mine", "x discard mine")
+	}
 	if row.ProposalSlug != "" {
-		hints = append(hints[:1], append([]string{"p publish"}, hints[1:]...)...)
+		hints = append(hints, "p publish")
 	}
-	if hasLocalEdits(row.Classification) {
-		hints = append([]string{"x discard mine"}, hints...)
-	}
-	if row.Classification == state.Conflicted {
-		hints = append([]string{"m merge"}, hints...)
-	}
+	hints = append(hints, "enter "+enterVerb, "e edit", "s sync", "? keys", "q quit")
 	return strings.Join(hints, " · ")
 }

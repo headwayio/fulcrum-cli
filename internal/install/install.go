@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/headwayio/fulcrum-cli/internal/skillmd"
+	"github.com/headwayio/fulcrum-cli/internal/state"
 	"github.com/headwayio/fulcrum-cli/internal/workspace"
 )
 
@@ -100,9 +101,16 @@ func Into(w *workspace.Workspace, projectDir string, targets []string, out, prob
 		if !ok {
 			continue // the rubric pair and any future non-skill documents
 		}
-		content, readErr := w.ReadLocal(slug)
-		if readErr != nil {
-			return 0, fmt.Errorf("read %s: %w", record.Filename, readErr)
+		// A local variant is what the developer is running, so it is what the
+		// agents should run — installed under the canonical name, so the
+		// harness still sees exactly one skill by that name.
+		content := w.ReadBeta(slug)
+		if content == nil {
+			var readErr error
+			content, readErr = w.ReadLocal(slug)
+			if readErr != nil {
+				return 0, fmt.Errorf("read %s: %w", record.Filename, readErr)
+			}
 		}
 		if content == nil {
 			fmt.Fprintf(problems, "skipped %s: local file missing — run `fulcrum sync`\n", record.Filename)
@@ -110,7 +118,9 @@ func Into(w *workspace.Workspace, projectDir string, targets []string, out, prob
 		}
 		name, description := skillmd.Describe(string(content), skillSlug)
 		skills = append(skills, skill{
-			slug: skillSlug, digest: record.FileSHA256,
+			// The digest of what was actually installed, which is the
+			// variant's when one is overriding.
+			slug: skillSlug, digest: state.HexSHA256(content),
 			name: name, description: description, content: content,
 		})
 	}

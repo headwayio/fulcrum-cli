@@ -38,6 +38,7 @@ type App struct {
 	// clears it while sync summaries survive refreshes.
 	statusOffline bool
 	authModal     string
+	showKeys      bool
 	quitting      bool
 }
 
@@ -112,6 +113,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return a, nil
 		}
+		if a.showKeys {
+			a.showKeys = false // any key dismisses
+			return a, nil
+		}
+		if key == "?" {
+			a.showKeys = true
+			return a, nil
+		}
 		if key == "esc" && len(a.stack) > 1 {
 			a.stack = a.stack[:len(a.stack)-1]
 			a.status = ""
@@ -175,6 +184,9 @@ func (a *App) View() tea.View {
 	if len(a.stack) > 0 {
 		body = a.stack[len(a.stack)-1].view()
 	}
+	if a.showKeys {
+		body = keysView()
+	}
 	if a.authModal != "" {
 		body = a.modalView()
 	}
@@ -203,6 +215,32 @@ func (a *App) headerContext() string {
 		}
 	}
 	return strings.Join(parts, " · ")
+}
+
+// keysView is the whole vocabulary in one place, so the per-row hint line
+// can stay short and contextual.
+func keysView() string {
+	rows := [][2]string{
+		{"enter", "open — reads, diffs, or shows the proposal, by state"},
+		{"e", "edit in $EDITOR"},
+		{"p", "publish your version as a proposal"},
+		{"b", "keep your version as a local variant (again to drop it)"},
+		{"m", "merge the team's version into yours"},
+		{"x", "discard your edits and take the team's"},
+		{"s", "sync — pulls documents and refreshes installed projects"},
+		{"n", "draft a brand-new skill"},
+		{"f", "push repository facts to a project"},
+		{"r", "refresh"},
+		{"esc", "back"},
+		{"q", "quit"},
+	}
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("Keys") + "\n\n")
+	for _, row := range rows {
+		b.WriteString(fmt.Sprintf("  %-6s %s\n", accentStyle.Render(row[0]), row[1]))
+	}
+	b.WriteString("\n" + dimStyle.Render("any key closes"))
+	return modalStyle.Render(b.String())
 }
 
 func (a *App) modalView() string {

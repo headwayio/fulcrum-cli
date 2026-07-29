@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/headwayio/fulcrum-cli/internal/api"
 	"github.com/headwayio/fulcrum-cli/internal/state"
@@ -47,6 +48,19 @@ type DocStatus struct {
 	RemoteDigest   string
 	Draft          bool
 	Classification state.Classification
+	// Beta describes the local variant overriding this document, when there
+	// is one. The row stays single: one skill, one line, whichever version
+	// the developer is actually using.
+	Beta *BetaStatus
+}
+
+// BetaStatus is the overlay a local variant puts on its document's row.
+type BetaStatus struct {
+	Filename string
+	// CanonicalMoved is true when the canonical document has advanced past
+	// the version this variant was forked from — mergeable, not broken.
+	CanonicalMoved bool
+	BaseDigest     string
 }
 
 // ReadLocal returns the local bytes for a synced document, nil (no error)
@@ -73,6 +87,99 @@ func (w *Workspace) SyncDocument(doc api.ManifestDocument, body []byte) error {
 		return err
 	}
 	w.State.RecordSync(doc.Slug, doc.Filename, doc.Digest, body)
+	return w.SaveState()
+}
+
+// BetaFilename is the variant's name beside its canonical document:
+// skill-writing-specs.md → skill-writing-specs.beta.md. Flat, like every
+// other workspace file, so the frozen Ruby client is unaffected and both
+// versions sit side by side.
+func BetaFilename(filename string) string {
+	return strings.TrimSuffix(filename, filepath.Ext(filename)) + ".beta" + filepath.Ext(filename)
+}
+
+// StartBeta turns the working copy into a local variant: `content` (the
+// developer's in-flight edits) becomes the beta, `canonical` becomes the
+// document again, and the canonical version at this moment becomes the
+// variant's merge base. Sync is free to move the canonical from here on.
+func (w *Workspace) StartBeta(doc api.ManifestDocument, content, canonical []byte) error {
+	betaName := BetaFilename(doc.Filename)
+	if err := writeAtomic(filepath.Join(w.Dir, betaName), content); err != nil {
+		return err
+	}
+	// The variant carries its own pristine base — the canonical file's base
+	// moves with every sync and cannot answer "what did I fork from".
+	if err := writeAtomic(filepath.Join(w.Dir, BaseDir, betaName), canonical); err != nil {
+		return err
+	}
+	if err := w.SyncDocument(doc, canonical); err != nil {
+		return err
+	}
+	w.State.RecordBeta(doc.Slug, betaName, doc.Digest)
+	return w.SaveState()
+}
+
+// DropBeta hands authority back to the canonical document, keeping the
+// variant's text under .fulcrum/discarded/ rather than deleting work.
+func (w *Workspace) DropBeta(slug string) (string, error) {
+	beta := w.State.BetaFor(slug)
+	if beta == nil {
+		return "", nil
+	}
+	kept := ""
+	if content := w.ReadBeta(slug); content != nil {
+		kept = filepath.Join(w.Dir, DiscardedDir, beta.Filename)
+		if err := writeAtomic(kept, content); err != nil {
+			return "", err
+		}
+	}
+	_ = os.Remove(filepath.Join(w.Dir, beta.Filename))
+	_ = os.Remove(filepath.Join(w.Dir, BaseDir, beta.Filename))
+	w.State.DropBeta(slug)
+	return kept, w.SaveState()
+}
+
+// ReadBeta returns the variant's current bytes, nil when there is none.
+func (w *Workspace) ReadBeta(slug string) []byte {
+	beta := w.State.BetaFor(slug)
+	if beta == nil {
+		return nil
+	}
+	content, err := os.ReadFile(filepath.Join(w.Dir, beta.Filename))
+	if err != nil {
+		return nil
+	}
+	return content
+}
+
+// BetaBase returns the canonical bytes the variant was forked from.
+func (w *Workspace) BetaBase(slug string) []byte {
+	beta := w.State.BetaFor(slug)
+	if beta == nil {
+		return nil
+	}
+	content, err := os.ReadFile(filepath.Join(w.Dir, BaseDir, beta.Filename))
+	if err != nil {
+		return nil
+	}
+	return content
+}
+
+// RebaseBeta records a merge of the canonical's current version into the
+// variant: merged content becomes the variant, and the canonical it was
+// merged with becomes the new base.
+func (w *Workspace) RebaseBeta(doc api.ManifestDocument, merged, canonical []byte) error {
+	beta := w.State.BetaFor(doc.Slug)
+	if beta == nil {
+		return fmt.Errorf("%s has no local variant", doc.Filename)
+	}
+	if err := writeAtomic(filepath.Join(w.Dir, beta.Filename), merged); err != nil {
+		return err
+	}
+	if err := writeAtomic(filepath.Join(w.Dir, BaseDir, beta.Filename), canonical); err != nil {
+		return err
+	}
+	w.State.RecordBeta(doc.Slug, beta.Filename, doc.Digest)
 	return w.SaveState()
 }
 
@@ -153,6 +260,7 @@ func (w *Workspace) Reconcile(manifest *api.Manifest) ([]DocStatus, error) {
 				RemoteDigest:   doc.Digest,
 				Draft:          doc.Draft,
 				Classification: w.State.Classify(doc.Slug, local, doc.Digest),
+				Beta:           w.betaStatus(doc.Slug, doc.Digest),
 			})
 		}
 		return rows, nil
@@ -174,12 +282,25 @@ func (w *Workspace) Reconcile(manifest *api.Manifest) ([]DocStatus, error) {
 			Slug:         slug,
 			Filename:     recorded.Filename,
 			RemoteDigest: recorded.RemoteDigest,
+			Beta:         w.betaStatus(slug, recorded.RemoteDigest),
 			// Last-known digest: remote movement is invisible offline, and
 			// that is the honest answer — never derive digests locally.
 			Classification: w.State.Classify(slug, local, recorded.RemoteDigest),
 		})
 	}
 	return rows, nil
+}
+
+func (w *Workspace) betaStatus(slug, canonicalDigest string) *BetaStatus {
+	beta := w.State.BetaFor(slug)
+	if beta == nil {
+		return nil
+	}
+	return &BetaStatus{
+		Filename:       beta.Filename,
+		BaseDigest:     beta.BaseDigest,
+		CanonicalMoved: beta.BaseDigest != canonicalDigest,
+	}
 }
 
 // writeAtomic writes via temp file + rename in the destination directory, so

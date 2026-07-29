@@ -32,6 +32,9 @@ type Row struct {
 	Classification state.Classification
 	// Draft marks a skill only its creator can see — publish reveals it.
 	Draft bool
+	// Beta is the local variant overriding this document, if any: the
+	// version actually installed into projects.
+	Beta *workspace.BetaStatus
 	// BaseDigest is the remote digest recorded AT LAST SYNC — what publish
 	// sends as base_digest so based_on_current stays truthful.
 	BaseDigest string
@@ -103,6 +106,13 @@ type Deps interface {
 	// DiscardLocal throws away local edits and takes the server's version,
 	// returning where the discarded copy was kept.
 	DiscardLocal(slug string) (string, error)
+	// StartBeta splits the document: the working copy becomes the local
+	// variant, the canonical one follows the team again. Returns the
+	// variant's filename.
+	StartBeta(slug string) (string, error)
+	// DropBeta hands authority back to the canonical document, returning
+	// where the variant's text was kept.
+	DropBeta(slug string) (string, error)
 	Publish(slug string, doc map[string]any, baseDigest, note string) (*api.ProposalReceipt, error)
 	ProposalByID(id int64) (*api.Proposal, error)
 
@@ -216,6 +226,7 @@ func (l *Live) Refresh() (*Snapshot, error) {
 			ProposalSlug:   row.ProposalSlug,
 			RemoteDigest:   row.RemoteDigest,
 			Draft:          row.Draft,
+			Beta:           row.Beta,
 			Classification: row.Classification,
 		}
 		if recorded := w.State.Document(row.Slug); recorded != nil {
@@ -432,6 +443,46 @@ func (l *Live) DiscardLocal(slug string) (string, error) {
 		return backup, w.SyncDocument(doc, res.Body)
 	}
 	return "", fmt.Errorf("%s is no longer in the manifest", slug)
+}
+
+func (l *Live) StartBeta(slug string) (string, error) {
+	w, err := l.workspace()
+	if err != nil {
+		return "", err
+	}
+	manifest, _, err := l.client().Manifest(context.Background(), "")
+	if err != nil {
+		return "", err
+	}
+	for _, doc := range manifest.Documents {
+		if doc.Slug != slug {
+			continue
+		}
+		content, readErr := w.ReadLocal(slug)
+		if readErr != nil {
+			return "", readErr
+		}
+		res, docErr := l.client().Document(context.Background(), slug, "")
+		if docErr != nil {
+			return "", docErr
+		}
+		if content == nil {
+			content = res.Body
+		}
+		if err := w.StartBeta(doc, content, res.Body); err != nil {
+			return "", err
+		}
+		return workspace.BetaFilename(doc.Filename), nil
+	}
+	return "", fmt.Errorf("%s is no longer in the manifest", slug)
+}
+
+func (l *Live) DropBeta(slug string) (string, error) {
+	w, err := l.workspace()
+	if err != nil {
+		return "", err
+	}
+	return w.DropBeta(slug)
 }
 
 func (l *Live) Publish(slug string, doc map[string]any, baseDigest, note string) (*api.ProposalReceipt, error) {

@@ -54,6 +54,22 @@ type Proposal struct {
 	Status     string `json:"status,omitempty"`
 }
 
+// Beta is a local variant of a synced document — the version a developer is
+// actually working with while the canonical one keeps syncing beside it.
+// Deliberately NOT a seventh classification: "conflicted" means resolve me
+// now, and running an experiment is not that.
+type Beta struct {
+	// Slug is the canonical document this overrides.
+	Slug string `json:"slug"`
+	// Filename is the beta's own file, <name>.beta.md, so both versions are
+	// visible and diffable in the workspace.
+	Filename string `json:"filename"`
+	// BaseDigest is the canonical version this was forked from or last
+	// merged with — what publish sends, so based_on_current stays truthful
+	// however far the canonical has moved since.
+	BaseDigest string `json:"base_digest"`
+}
+
 // SyncState mirrors the Ruby class. The exported fields marshal in the
 // Ruby writer's key order.
 type SyncState struct {
@@ -67,6 +83,9 @@ type SyncState struct {
 	// when empty — the Ruby client tolerates unknown keys, and a workspace
 	// that never installed anything writes the same bytes as before.
 	Installs []string `json:"installs,omitempty"`
+	// Betas are local variants overriding their canonical documents. Also
+	// additive and omitted when empty.
+	Betas []*Beta `json:"betas,omitempty"`
 }
 
 // New returns an empty state as this client creates it.
@@ -163,6 +182,39 @@ func (s *SyncState) ForgetInstall(dir string) bool {
 	for i, known := range s.Installs {
 		if known == dir {
 			s.Installs = append(s.Installs[:i], s.Installs[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// BetaFor returns the local variant overriding slug, nil when there is none.
+func (s *SyncState) BetaFor(slug string) *Beta {
+	for _, beta := range s.Betas {
+		if beta.Slug == slug {
+			return beta
+		}
+	}
+	return nil
+}
+
+// RecordBeta creates or re-bases the variant for slug.
+func (s *SyncState) RecordBeta(slug, filename, baseDigest string) {
+	if existing := s.BetaFor(slug); existing != nil {
+		existing.Filename = filename
+		existing.BaseDigest = baseDigest
+		return
+	}
+	s.Betas = append(s.Betas, &Beta{Slug: slug, Filename: filename, BaseDigest: baseDigest})
+	sort.Slice(s.Betas, func(i, j int) bool { return s.Betas[i].Slug < s.Betas[j].Slug })
+}
+
+// DropBeta removes the variant for slug, handing authority back to the
+// canonical document. Reports whether there was one.
+func (s *SyncState) DropBeta(slug string) bool {
+	for i, beta := range s.Betas {
+		if beta.Slug == slug {
+			s.Betas = append(s.Betas[:i], s.Betas[i+1:]...)
 			return true
 		}
 	}

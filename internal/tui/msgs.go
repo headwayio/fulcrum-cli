@@ -107,6 +107,15 @@ type discardedMsg struct {
 
 func (m discardedMsg) failure() error { return m.err }
 
+// betaChangedMsg reports a local variant started or dropped.
+type betaChangedMsg struct {
+	filename string
+	dropped  bool
+	err      error
+}
+
+func (m betaChangedMsg) failure() error { return m.err }
+
 // draftCreatedMsg reports a freshly minted creator-only draft skill.
 type draftCreatedMsg struct {
 	draft *api.SkillDraft

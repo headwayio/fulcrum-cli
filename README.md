@@ -36,6 +36,13 @@ markers where they do. If your side is not worth keeping, `fulcrum revert`
 (or `x`) takes the server's version instead and files your copy under
 `.fulcrum/discarded/`.
 
+Trying something out? `fulcrum skills beta <slug>` (or `b` in the TUI) makes
+your version `<name>.beta.md` and lets the canonical one keep syncing beside
+it. Your beta is what installs into projects — under the canonical name, so
+agents still see one skill by that name — `fulcrum merge` pulls the team's
+newer version into yours, publishing proposes yours as the team's next, and
+`--drop` hands authority back.
+
 `fulcrum skills install <project-dir>` writes the org's skills into every
 harness format a project might read, because one project often drives
 several agents:

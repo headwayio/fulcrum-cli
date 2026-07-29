@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/headwayio/fulcrum-cli/internal/api"
 	"github.com/headwayio/fulcrum-cli/internal/state"
+	"github.com/headwayio/fulcrum-cli/internal/workspace"
 )
 
 // harness wraps a TestModel with a CUMULATIVE output buffer: teatest's
@@ -389,6 +391,74 @@ func TestDiscardRefusedWithoutLocalEdits(t *testing.T) {
 	waitContains(t, h, "nothing local to discard")
 	if len(deps.discarded) != 0 {
 		t.Errorf("discarded = %v", deps.discarded)
+	}
+}
+
+func TestKeysOverlayListsEveryVerb(t *testing.T) {
+	deps := &fakeDeps{configured: true, serverURL: "http://srv", snapshot: allStatesSnapshot()}
+	h := newTestModel(t, deps)
+	waitContains(t, h, "synced.md")
+
+	// The row hint stays short; the full vocabulary lives behind ?.
+	waitContains(t, h, "? keys")
+	h.Type("?")
+	for _, verb := range []string{"draft a brand-new skill", "push repository facts", "local variant"} {
+		waitContains(t, h, verb)
+	}
+
+	// Any key closes the overlay rather than acting — q here dismisses
+	// instead of quitting, so the final frame is the list again.
+	h.Type("q")
+	frame := string(finalFrame(t, h))
+	if strings.Contains(frame, "draft a brand-new skill") {
+		t.Errorf("the overlay should have closed:\n%s", frame)
+	}
+	if !strings.Contains(frame, "synced.md") {
+		t.Errorf("the list should be back:\n%s", frame)
+	}
+}
+
+// --- local variants (beta) ---
+
+func TestBetaKeepsMineAndDropsIt(t *testing.T) {
+	deps := &fakeDeps{configured: true, serverURL: "http://srv", snapshot: allStatesSnapshot()}
+	h := newTestModel(t, deps)
+	waitContains(t, h, "drifted.json")
+
+	// On a document with edits, b offers to keep them as yours.
+	h.Type("j")
+	waitContains(t, h, "b keep as mine")
+	h.Type("b")
+	waitContains(t, h, "is yours now")
+	if len(deps.betaStarted) != 1 || deps.betaStarted[0] != "doc-drifted" {
+		t.Errorf("betaStarted = %v", deps.betaStarted)
+	}
+}
+
+func TestBetaRowReplacesStateAndOffersMerge(t *testing.T) {
+	snapshot := allStatesSnapshot()
+	// A document being overridden by the developer's own version, with the
+	// team having moved past it.
+	snapshot.Rows = append(snapshot.Rows, Row{
+		Slug: "doc-beta", Filename: "beta-doc.md", Format: "markdown",
+		ProposalSlug: "doc-beta-target", RemoteDigest: "ffff0000ffff",
+		Classification: state.Synced,
+		Beta:           &workspace.BetaStatus{Filename: "beta-doc.beta.md", CanonicalMoved: true},
+	})
+	deps := &fakeDeps{configured: true, serverURL: "http://srv", snapshot: snapshot}
+	h := newTestModel(t, deps)
+	waitContains(t, h, "beta-doc.md")
+
+	h.Type("jjjjjjj") // to the beta row (last)
+	// The row says what is running, not "synced".
+	waitContains(t, h, "beta")
+	waitContains(t, h, "m merge theirs in")
+	waitContains(t, h, "b drop variant")
+
+	h.Type("b")
+	waitContains(t, h, "variant dropped")
+	if len(deps.betaDropped) != 1 || deps.betaDropped[0] != "doc-beta" {
+		t.Errorf("betaDropped = %v", deps.betaDropped)
 	}
 }
 

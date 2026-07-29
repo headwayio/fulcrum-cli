@@ -44,6 +44,8 @@ type fakeDeps struct {
 	mergeConflicts int
 	mergeErr       error
 	discarded      []string
+	betaStarted    []string
+	betaDropped    []string
 }
 
 func (f *fakeDeps) Configured() (bool, error) { return f.configured, nil }
@@ -97,6 +99,16 @@ func (f *fakeDeps) MergeRemote(slug string) (*MergeOutcome, error) {
 func (f *fakeDeps) DiscardLocal(slug string) (string, error) {
 	f.discarded = append(f.discarded, slug)
 	return "/fake/workspace/.fulcrum/discarded/" + slug + ".md", nil
+}
+
+func (f *fakeDeps) StartBeta(slug string) (string, error) {
+	f.betaStarted = append(f.betaStarted, slug)
+	return slug + ".beta.md", nil
+}
+
+func (f *fakeDeps) DropBeta(slug string) (string, error) {
+	f.betaDropped = append(f.betaDropped, slug)
+	return "/fake/workspace/.fulcrum/discarded/" + slug + ".beta.md", nil
 }
 
 func (f *fakeDeps) CreateSkillDraft(name string) (*api.SkillDraft, error) {

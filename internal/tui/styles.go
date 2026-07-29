@@ -40,6 +40,15 @@ func badge(c state.Classification) string {
 	}
 }
 
+// betaBadge marks a document a local variant is standing in for — the
+// version that installs into projects.
+func betaBadge(canonicalMoved bool) string {
+	if canonicalMoved {
+		return warnStyle.Render("β beta · the team's has moved")
+	}
+	return accentStyle.Render("β beta · yours, current")
+}
+
 // outcomeBadge names a reconciled proposal outcome on the row.
 func outcomeBadge(outcome string, id int64) string {
 	if outcome == "applied" {

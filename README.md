@@ -53,10 +53,7 @@ with `--target claude|shared|agents|auto` if you want less.
 
 Then run `fulcrum` with no arguments for the interactive view, or script it:
 `fulcrum status --json` exits 0 when everything is fresh, 1 when anything is
-behind/drifted/conflicted, 2 on network/auth/config errors. Your org's shared
-skills sync alongside the rubric — `fulcrum skills install <project-dir>`
-places them into that project's `.claude/skills/` (with a digest pin file),
-so agentic feature work runs on the team-approved set.
+behind/drifted/conflicted, 2 on network/auth/config errors.
 
 Scripted setups skip `login` entirely — the Ruby reference client's exact
 four env vars work here too: `FULCRUM_URL`, `FULCRUM_API_TOKEN`,

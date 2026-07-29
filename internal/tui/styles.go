@@ -40,6 +40,20 @@ func badge(c state.Classification) string {
 	}
 }
 
+// draftBadge: an unpublished draft is nobody else's business, so its row
+// says where the writing stands, not how far it has moved from the template
+// it was minted from.
+func draftBadge(c state.Classification) string {
+	switch c {
+	case state.Missing:
+		return errStyle.Render("x draft · the file is gone")
+	case state.Synced:
+		return dimStyle.Render("* draft (only you) · still the template")
+	default:
+		return accentStyle.Render("* draft (only you) · ready to publish")
+	}
+}
+
 // betaBadge marks a document a local variant is standing in for — the
 // version that installs into projects.
 func betaBadge(canonicalMoved bool) string {

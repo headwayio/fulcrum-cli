@@ -348,6 +348,12 @@ func (l *Live) SyncAll(force bool) ([]string, error) {
 			return lines, readErr
 		}
 		c := w.State.Classify(doc.Slug, local, doc.Digest)
+		// Same rule as the CLI: a draft has no upstream, so bulk sync never
+		// touches it — not even with force.
+		if doc.Draft {
+			lines = append(lines, fmt.Sprintf("draft %s left alone", doc.Filename))
+			continue
+		}
 		if !force && c == state.Synced {
 			// Digest identity: nothing moved, so there is nothing to fetch.
 			lines = append(lines, fmt.Sprintf("fresh %s", doc.Filename))

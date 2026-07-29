@@ -495,17 +495,35 @@ func TestDraftSkillFlow(t *testing.T) {
 	}
 }
 
-func TestDraftRowIsBadged(t *testing.T) {
+func TestDraftRowSaysWhereTheWritingStands(t *testing.T) {
 	snapshot := allStatesSnapshot()
-	snapshot.Rows = append(snapshot.Rows, Row{
-		Slug: "skill-my-draft", Filename: "skill-my-draft.md", Format: "markdown",
-		ProposalSlug: "skill-my-draft", RemoteDigest: "dddddddddddd",
-		Classification: state.Synced, Draft: true,
-	})
+	snapshot.Rows = append(snapshot.Rows,
+		Row{
+			Slug: "skill-untouched", Filename: "skill-untouched.md", Format: "markdown",
+			ProposalSlug: "skill-untouched", RemoteDigest: "dddddddddddd",
+			Classification: state.Synced, Draft: true,
+		},
+		// Editing a draft is the whole point of having one, so the row must
+		// not call it drifted — and it must not count as staleness, since
+		// nobody else can see it.
+		Row{
+			Slug: "skill-written", Filename: "skill-written.md", Format: "markdown",
+			ProposalSlug: "skill-written", RemoteDigest: "dddddddddddd",
+			Classification: state.Drifted, Draft: true,
+		},
+	)
 	deps := &fakeDeps{configured: true, serverURL: "http://srv", snapshot: snapshot}
 	h := newTestModel(t, deps)
-	waitContains(t, h, "skill-my-draft.md")
-	waitContains(t, h, "draft (only you)")
+
+	waitContains(t, h, "still the template")
+	waitContains(t, h, "ready to publish")
+	// The five stale rows are the pre-existing ones; neither draft adds to it.
+	waitContains(t, h, "9 document(s), 5 stale")
+
+	// A variant of your own private draft would mean nothing.
+	h.Type("jjjjjjjj")
+	h.Type("b")
+	waitContains(t, h, "already only yours")
 }
 
 // --- choosing an organization ---

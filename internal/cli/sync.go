@@ -56,6 +56,15 @@ func (a *App) runSync(force bool) error {
 		}
 		classification := w.State.Classify(doc.Slug, local, doc.Digest)
 
+		// A draft's server copy is the template it was minted from — there is
+		// no team version to catch up to, and --force would replace your
+		// writing with boilerplate. Bulk sync leaves drafts alone; `revert`
+		// is the explicit per-document way to go back to the template.
+		if doc.Draft {
+			fmt.Fprintf(a.Stdout, "draft %s (unpublished, left alone)\n", doc.Filename)
+			continue
+		}
+
 		if classification == state.Synced && !force {
 			// Digest identity: nothing moved, nothing to fetch.
 			fmt.Fprintf(a.Stdout, "fresh %s\n", doc.Filename)

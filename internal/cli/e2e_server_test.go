@@ -169,9 +169,11 @@ func newFixtureServer() *fixtureServer {
 		f.mu.Lock()
 		id := f.nextID
 		f.nextID++
+		content, _ := payload.Document["content"].(string)
 		f.proposals = append(f.proposals, map[string]any{
 			"id": id, "slug": payload.Slug, "status": "pending", "note": payload.Note,
-			"base_digest": payload.BaseDigest, "based_on_current": true,
+			"proposed_content": content,
+			"base_digest":      payload.BaseDigest, "based_on_current": true,
 			"created_at": "2026-07-01T12:00:00Z", "resolved_at": nil,
 			"resolved_by_name": nil, "changed_sections": []string{"components"},
 		})
@@ -245,13 +247,31 @@ func (f *fixtureServer) resolveProposalStatus(id int64, status string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, p := range f.proposals {
-		if p["id"] == id {
-			p["status"] = status
-			p["resolved_at"] = "2026-07-01T13:00:00Z"
-			p["resolved_by_name"] = "Ada Admin"
-			p["changed_sections"] = nil
-			return true
+		if p["id"] != id {
+			continue
 		}
+		p["status"] = status
+		p["resolved_at"] = "2026-07-01T13:00:00Z"
+		p["resolved_by_name"] = "Ada Admin"
+		p["changed_sections"] = nil
+
+		// Applying a proposal for a draft publishes it, exactly as the server
+		// does: the content becomes the new version and the draft flag clears,
+		// so everyone sees it from here on.
+		if status == "applied" {
+			for _, d := range f.drafts {
+				if d["slug"] != p["slug"] {
+					continue
+				}
+				if content, ok := p["proposed_content"].(string); ok && content != "" {
+					d["content"] = content
+					d["digest"] = fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+				}
+				d["draft"] = false
+				d["version"] = 2
+			}
+		}
+		return true
 	}
 	return false
 }

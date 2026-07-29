@@ -59,6 +59,19 @@ type statusRow struct {
 	UnresolvedConflict bool `json:"unresolved_conflict,omitempty"`
 }
 
+// draftLabel: an unpublished draft is either still the template it was
+// minted from, or written and waiting to be proposed.
+func draftLabel(c state.Classification) string {
+	switch c {
+	case state.Missing:
+		return "draft (only you) — the file is gone; revert restores the template"
+	case state.Synced:
+		return "draft (only you) — still the template, write it then publish"
+	default:
+		return "draft (only you) — publish when you are ready"
+	}
+}
+
 // unresolvedMarkers reports whether the version in play — the local variant
 // when there is one — still carries merge markers.
 func unresolvedMarkers(w *workspace.Workspace, row workspace.DocStatus) bool {
@@ -118,6 +131,11 @@ func (a *App) runStatus(asJSON, withDiff bool) error {
 			RemoteDigest: row.RemoteDigest,
 		}
 		switch {
+		case row.Draft:
+			// Nobody else can see a draft, so it cannot make this machine
+			// stale. The question worth answering is whether it has been
+			// written yet, not whether it differs from its own template.
+			entry.State = "draft"
 		case row.Beta != nil:
 			// Running your own version is a choice, not staleness — but the
 			// team moving past it is something to act on.
@@ -196,6 +214,9 @@ func (a *App) printDiffs(w *workspace.Workspace, rows []workspace.DocStatus) {
 
 // rowLabel names reconciled proposal outcomes instead of a bare drift.
 func (a *App) rowLabel(w *workspace.Workspace, row workspace.DocStatus) string {
+	if row.Draft {
+		return draftLabel(row.Classification)
+	}
 	// A local variant is the answer to "what am I running", so it replaces
 	// the canonical's state on the row rather than sitting beside it.
 	if row.Beta != nil {

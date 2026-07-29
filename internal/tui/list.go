@@ -222,6 +222,10 @@ func (s *listScreen) handleKey(key string) (screen, tea.Cmd) {
 			return s, nil
 		}
 		row := rows[s.cursor]
+		if row.Draft {
+			s.app.status = "a draft is already only yours — publish it when you are ready"
+			return s, nil
+		}
 		if s.offline() {
 			s.app.status = "offline — starting a variant needs the server"
 			return s, nil
@@ -335,6 +339,10 @@ func (s *listScreen) view() string {
 	var b strings.Builder
 	stale := 0
 	for _, row := range rows {
+		// Drafts are private and betas are deliberate — neither is staleness.
+		if row.Draft || row.Beta != nil {
+			continue
+		}
 		if row.Classification != state.Synced && row.Classification != state.Proposed {
 			stale++
 		}
@@ -366,12 +374,13 @@ func (s *listScreen) view() string {
 			label = outcomeBadge(row.Outcome, row.OutcomeID)
 		}
 		// A local variant answers "what am I running", so it takes the row's
-		// state rather than sitting beside it.
+		// state rather than sitting beside it. A draft does the same: it has
+		// no upstream, so classifying it against one says nothing.
 		if row.Beta != nil {
 			label = betaBadge(row.Beta.CanonicalMoved)
 		}
 		if row.Draft {
-			label += dimStyle.Render("  · draft (only you)")
+			label = draftBadge(row.Classification)
 		}
 		b.WriteString(fmt.Sprintf("%s%s %-12s %s\n", marker, name, shortDigest(row.RemoteDigest), label))
 	}
@@ -395,6 +404,11 @@ func (s *listScreen) hints(row Row) string {
 	// reads.
 	var hints []string
 	switch {
+	case row.Draft:
+		// A draft is already only yours; a variant of it would mean nothing.
+		if row.Classification != state.Synced {
+			hints = append(hints, "x reset to template")
+		}
 	case row.Beta != nil:
 		if row.Beta.CanonicalMoved {
 			hints = append(hints, "m merge theirs in")

@@ -10,19 +10,30 @@ grep 'only you see it until you publish' last-stdout.txt
 exists skills/skill-writing-migrations.md
 grep 'name: writing-migrations' skills/skill-writing-migrations.md
 
-# Tracked immediately: fresh template classifies synced.
+# Tracked immediately, and reported as what it is: an unwritten draft.
 fulcrum status
-grep 'skill-writing-migrations.md' last-stdout.txt
+grep 'still the template' last-stdout.txt
 ! grep 'unsynced' last-stdout.txt
 
 # Reserved names are refused with the server's message.
 fulcrum -code 2 skills new writing-migrations
 grep 'exists' last-stderr.txt
 
-# Edit → drifted → publish sends the content wrap; apply resolves it.
+# Writing the draft is the point, so it is never "drifted" and never makes
+# the machine stale — nobody else can see it.
 cp edited-draft.md skills/skill-writing-migrations.md
-fulcrum -code 1 status
-grep 'drifted' last-stdout.txt
+fulcrum status
+grep 'publish when you are ready' last-stdout.txt
+! grep 'drifted' last-stdout.txt
+
+# Sync leaves it alone — even --force, which would otherwise replace the
+# writing with the template it was minted from.
+fulcrum sync
+grep 'draft skill-writing-migrations.md .unpublished, left alone.' last-stdout.txt
+cmp skills/skill-writing-migrations.md edited-draft.md
+fulcrum sync --force
+cmp skills/skill-writing-migrations.md edited-draft.md
+
 
 fulcrum publish --yes --note first-version
 grep 'Proposal #101 submitted' last-stdout.txt

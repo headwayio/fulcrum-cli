@@ -6,14 +6,17 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/headwayio/fulcrum-cli/internal/api"
 	"github.com/headwayio/fulcrum-cli/internal/config"
 	"github.com/headwayio/fulcrum-cli/internal/diffx"
+	"github.com/headwayio/fulcrum-cli/internal/install"
 	"github.com/headwayio/fulcrum-cli/internal/scan"
 	"github.com/headwayio/fulcrum-cli/internal/state"
 	"github.com/headwayio/fulcrum-cli/internal/workspace"
@@ -329,6 +332,16 @@ func (l *Live) SyncAll(force bool) ([]string, error) {
 			return lines, err
 		}
 		lines = append(lines, fmt.Sprintf("synced %s", doc.Filename))
+	}
+
+	// Same rule as the CLI: whatever landed reaches the projects already
+	// reading these skills, in every harness format they use.
+	var refreshed strings.Builder
+	install.Refresh(w, &refreshed, io.Discard)
+	for _, line := range strings.Split(strings.TrimSpace(refreshed.String()), "\n") {
+		if line != "" {
+			lines = append(lines, line)
+		}
 	}
 	return lines, nil
 }

@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/headwayio/fulcrum-cli/internal/install"
 	"github.com/headwayio/fulcrum-cli/internal/state"
 )
 
@@ -84,6 +85,10 @@ func (a *App) runSync(force bool) error {
 		}
 		fmt.Fprintf(a.Stdout, "synced %s (%.12s…)\n", doc.Filename, doc.Digest)
 	}
+
+	// Whatever landed, push it into the projects already reading these
+	// skills — a synced-but-uninstalled skill is invisible to the harness.
+	install.Refresh(w, a.Stdout, a.Stderr)
 
 	if skipped > 0 {
 		fmt.Fprintf(a.Stderr, "%d document(s) skipped to protect local edits\n", skipped)

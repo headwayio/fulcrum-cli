@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 // StateFile is the workspace-relative filename, shared with the Ruby client.
@@ -61,6 +62,11 @@ type SyncState struct {
 	// FileVersion is 0 for files written by the Ruby client (absent key) and
 	// Version for files this client created.
 	FileVersion int `json:"version,omitempty"`
+	// Installs are project directories skills were installed into, so a sync
+	// can refresh every harness that is reading them. Additive and omitted
+	// when empty — the Ruby client tolerates unknown keys, and a workspace
+	// that never installed anything writes the same bytes as before.
+	Installs []string `json:"installs,omitempty"`
 }
 
 // New returns an empty state as this client creates it.
@@ -133,6 +139,34 @@ func (s *SyncState) RecordSync(slug, filename, remoteDigest string, body []byte)
 // RecordProposal mirrors Ruby record_proposal.
 func (s *SyncState) RecordProposal(slug string, id int64, fileSHA256 string) {
 	s.Proposals = append(s.Proposals, &Proposal{Slug: slug, ID: id, FileSHA256: fileSHA256})
+}
+
+// RememberInstall records a project directory as an install site. Returns
+// true when this is new, so callers know whether to persist.
+func (s *SyncState) RememberInstall(dir string) bool {
+	absolute, err := filepath.Abs(dir)
+	if err != nil {
+		absolute = dir
+	}
+	for _, known := range s.Installs {
+		if known == absolute {
+			return false
+		}
+	}
+	s.Installs = append(s.Installs, absolute)
+	sort.Strings(s.Installs)
+	return true
+}
+
+// ForgetInstall drops a project directory (it moved, or was deleted).
+func (s *SyncState) ForgetInstall(dir string) bool {
+	for i, known := range s.Installs {
+		if known == dir {
+			s.Installs = append(s.Installs[:i], s.Installs[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
 
 // Document returns the sync record for slug, nil when never synced.

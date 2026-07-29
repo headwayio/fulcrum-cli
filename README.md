@@ -36,11 +36,20 @@ markers where they do. If your side is not worth keeping, `fulcrum revert`
 (or `x`) takes the server's version instead and files your copy under
 `.fulcrum/discarded/`.
 
-`fulcrum skills install <project-dir>` writes the org's skills into whichever
-harness format that project uses — `.claude/skills/<slug>/SKILL.md` for
-Claude Code, a managed block in `AGENTS.md` for Codex and the other readers
-of that convention, or both with `--target all`. It only edits its own block;
-the rest of your `AGENTS.md` is yours.
+`fulcrum skills install <project-dir>` writes the org's skills into every
+harness format a project might read, because one project often drives
+several agents:
+
+| format   | path                              | read by                                  |
+| -------- | --------------------------------- | ---------------------------------------- |
+| `claude` | `.claude/skills/<slug>/SKILL.md`  | Claude Code                              |
+| `shared` | `.skills/<slug>/SKILL.md`         | Kimi Code, OpenCode, other SKILL.md agents |
+| `agents` | managed block in `AGENTS.md`      | Codex, Kimi Code, the AGENTS.md convention |
+
+The project is remembered, so every later `fulcrum sync` refreshes all of
+them — no harness is left reading yesterday's skills. Only fulcrum's own
+block in `AGENTS.md` is touched; the rest of that file is yours. Narrow it
+with `--target claude|shared|agents|auto` if you want less.
 
 Then run `fulcrum` with no arguments for the interactive view, or script it:
 `fulcrum status --json` exits 0 when everything is fresh, 1 when anything is

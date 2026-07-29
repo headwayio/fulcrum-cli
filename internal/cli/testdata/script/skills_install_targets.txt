@@ -1,48 +1,59 @@
-# Per-project harness formats: Claude Code reads a directory of SKILL.md
-# files, Codex and the other AGENTS.md readers read one file. Install writes
-# whichever the project already uses, and never touches the rest of AGENTS.md.
+# One project often drives several agents, so install writes every format
+# and sync keeps them all current: Claude Code's .claude/skills, the
+# vendor-neutral .skills directory (Kimi Code, OpenCode), and a managed
+# block in AGENTS.md (Codex, Kimi Code).
 
 fulcrum sync
 
-# A project using neither convention gets the Claude layout by default.
-fulcrum skills install $WORK/fresh
-exists fresh/.claude/skills/corpus-writing-specs/SKILL.md
-! exists fresh/AGENTS.md
-grep '"targets"' fresh/.fulcrum/.fulcrum-installed.json
+fulcrum skills install $WORK/proj
+exists proj/.claude/skills/corpus-writing-specs/SKILL.md
+exists proj/.skills/corpus-writing-specs/SKILL.md
+exists proj/AGENTS.md
+grep 'BEGIN fulcrum skills' proj/AGENTS.md
+grep '### corpus-writing-specs' proj/AGENTS.md
+grep 'Name the behavior, not the implementation.' proj/AGENTS.md
+cmp proj/.skills/corpus-writing-specs/SKILL.md skills/skill-corpus-writing-specs.md
+grep 'claude' proj/.fulcrum/.fulcrum-installed.json
+grep 'shared' proj/.fulcrum/.fulcrum-installed.json
+grep 'agents' proj/.fulcrum/.fulcrum-installed.json
 
-# A project with an AGENTS.md gets its skills there instead — detected, not
-# configured — with the surrounding file left alone.
-mkdir codexproj
-cp house-rules.md codexproj/AGENTS.md
-fulcrum skills install $WORK/codexproj
-! exists codexproj/.claude/skills/corpus-writing-specs/SKILL.md
-grep '# House rules' codexproj/AGENTS.md
-grep 'Keep this paragraph.' codexproj/AGENTS.md
-grep 'BEGIN fulcrum skills' codexproj/AGENTS.md
-grep '### corpus-writing-specs' codexproj/AGENTS.md
-grep 'Name the behavior, not the implementation.' codexproj/AGENTS.md
+# The project's own AGENTS.md prose is never touched, and re-running
+# replaces the block instead of stacking copies.
+cp house-rules.md proj2/AGENTS.md
+fulcrum skills install $WORK/proj2
+fulcrum skills install $WORK/proj2
+grep '# House rules' proj2/AGENTS.md
+grep 'Keep this paragraph.' proj2/AGENTS.md
+grep -count=1 'BEGIN fulcrum skills' proj2/AGENTS.md
+grep -count=1 '### corpus-writing-specs' proj2/AGENTS.md
 
-# Re-running replaces the block rather than stacking copies, and the
-# project's own text still survives.
-fulcrum skills install $WORK/codexproj
-grep -count=1 'BEGIN fulcrum skills' codexproj/AGENTS.md
-grep -count=1 '### corpus-writing-specs' codexproj/AGENTS.md
-grep 'Keep this paragraph.' codexproj/AGENTS.md
+# A later sync pushes new content into every registered project, in every
+# format — no harness is left reading yesterday's skills.
+srv edit skill-corpus-writing-specs 'Name the behavior, not the implementation.' 'Rewritten upstream.'
+fulcrum sync
+grep 'refreshed 1 skill' last-stdout.txt
+grep 'Rewritten upstream.' proj/.claude/skills/corpus-writing-specs/SKILL.md
+grep 'Rewritten upstream.' proj/.skills/corpus-writing-specs/SKILL.md
+grep 'Rewritten upstream.' proj/AGENTS.md
+grep 'Rewritten upstream.' proj2/AGENTS.md
 
-# A project that uses both gets both.
-mkdir bothproj
-cp house-rules.md bothproj/AGENTS.md
-mkdir bothproj/.claude
-fulcrum skills install $WORK/bothproj
-exists bothproj/.claude/skills/corpus-writing-specs/SKILL.md
-grep 'BEGIN fulcrum skills' bothproj/AGENTS.md
+# A project that has moved away is forgotten rather than nagged about.
+rm proj2
+fulcrum sync
+! grep 'proj2' last-stderr.txt
 
-# An explicit target overrides detection; a bogus one is refused.
-fulcrum skills install $WORK/fresh --target agents
-exists fresh/AGENTS.md
-fulcrum -code 2 skills install $WORK/fresh --target sublime
-grep 'unknown --target' last-stderr.txt
+# --target narrows it; auto writes only what the project already uses.
+fulcrum skills install $WORK/onlyclaude --target claude
+exists onlyclaude/.claude/skills/corpus-writing-specs/SKILL.md
+! exists onlyclaude/AGENTS.md
+fulcrum skills install $WORK/onlyclaude --target auto
+! exists onlyclaude/AGENTS.md
 
+fulcrum -code 2 skills install $WORK/proj --target sublime
+grep 'unknown target' last-stderr.txt
+grep 'claude, shared, agents' last-stderr.txt
+
+-- proj2/.keep --
 -- house-rules.md --
 # House rules
 

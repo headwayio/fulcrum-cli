@@ -182,9 +182,11 @@ func TestPublishWizardFlow(t *testing.T) {
 	h.Type("widened per client call")
 	h.Send(enter())
 
-	// based_on_current arrives verbatim, flagged when false.
+	// A stale base is named in words the author can act on, not as the
+	// API's field name.
 	waitContains(t, h, "Proposal #55 submitted")
-	waitContains(t, h, "based_on_current: false")
+	waitContains(t, h, "Based on an older version")
+	waitContains(t, h, "the reviewer sees it flagged")
 	waitContains(t, h, "http://srv/knowledge_proposals/55")
 
 	h.Type("o")

@@ -13,7 +13,7 @@ import (
 )
 
 // publishScreen is the wizard: review the diff, write the required note,
-// submit, see the verdict — with based_on_current surfaced verbatim.
+// submit, see the verdict — with a stale base always called out.
 type publishScreen struct {
 	app *App
 	row Row
@@ -137,6 +137,33 @@ func (s *publishScreen) submit() (screen, tea.Cmd) {
 
 func (s *publishScreen) pageSize() int { return max(s.app.height-14, 4) }
 
+// verdict says what the submission means for the author, in the words the
+// web review page uses — they are one keypress from reading them there.
+//
+// A draft needs its own sentences: the team has no version of it, so
+// "based on the team's current version" would be false, and it would bury
+// the thing that actually matters — approving a draft is what reveals it
+// org-wide. A draft can still carry a stale base, since its creator can
+// edit the same draft in the browser.
+func (s *publishScreen) verdict() string {
+	switch {
+	case s.row.Draft && s.receipt.basedOnCurrent:
+		return dimStyle.Render(
+			"New skill — approving this publishes it to the team for the first time.") + "\n"
+	case s.row.Draft:
+		return warnStyle.Render(
+			"Your draft moved on the server since you synced — the reviewer sees it flagged.") + "\n"
+	case s.receipt.basedOnCurrent:
+		return dimStyle.Render(
+			"Based on the team's current version — the reviewer can apply it as-is.") + "\n"
+	default:
+		return warnStyle.Render(
+			"Based on an older version — the team's copy moved since you synced.") + "\n" +
+			warnStyle.Render(
+				"Applying it would supersede those changes, so the reviewer sees it flagged.") + "\n"
+	}
+}
+
 func (s *publishScreen) view() string {
 	if !s.loaded {
 		return dimStyle.Render("loading…")
@@ -146,11 +173,7 @@ func (s *publishScreen) view() string {
 	switch s.stage {
 	case 2:
 		b.WriteString(okStyle.Render(fmt.Sprintf("Proposal #%d submitted.", s.receipt.id)) + "\n\n")
-		if s.receipt.basedOnCurrent {
-			b.WriteString("based_on_current: true\n")
-		} else {
-			b.WriteString(warnStyle.Render("based_on_current: false — the reviewer sees it flagged stale") + "\n")
-		}
+		b.WriteString(s.verdict())
 		b.WriteString("review at " + accentStyle.Render(s.app.deps.ServerURL()+s.receipt.reviewURL) + "\n\n")
 		b.WriteString(dimStyle.Render("o open in browser · esc back to documents"))
 	case 1:

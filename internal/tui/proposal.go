@@ -82,9 +82,9 @@ func (s *proposalScreen) view() string {
 		b.WriteString("note: " + p.Note + "\n")
 	}
 	if p.BasedOnCurrent {
-		b.WriteString("based_on_current: true\n")
+		b.WriteString("base: the current version\n")
 	} else {
-		b.WriteString(warnStyle.Render("based_on_current: false (flagged stale for the reviewer)") + "\n")
+		b.WriteString(warnStyle.Render("base: an older version — flagged for the reviewer") + "\n")
 	}
 	if len(p.ChangedSections) > 0 {
 		b.WriteString("changed sections: " + strings.Join(p.ChangedSections, ", ") + "\n")

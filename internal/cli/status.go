@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/headwayio/fulcrum-cli/internal/api"
+	"github.com/headwayio/fulcrum-cli/internal/diffx"
 	"github.com/headwayio/fulcrum-cli/internal/state"
 	"github.com/headwayio/fulcrum-cli/internal/workspace"
 )
@@ -24,7 +25,7 @@ var statusLabels = map[state.Classification]string{
 }
 
 func (a *App) statusCmd() *cobra.Command {
-	var asJSON bool
+	var asJSON, withDiff bool
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show each document's local state",
@@ -32,13 +33,15 @@ func (a *App) statusCmd() *cobra.Command {
 			"0 = everything fresh, 1 = anything stale (drifted/behind/conflicted/\n" +
 			"missing/unsynced), 2 = network/auth/config failure — staleness and\n" +
 			"unreachability are never conflated. Offline, rows come from the last\n" +
-			"known sync state.",
+			"known sync state. --diff appends a unified diff (last sync → local)\n" +
+			"for every drifted or conflicted document.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runStatus(asJSON)
+			return a.runStatus(asJSON, withDiff)
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable output with a reachable flag")
+	cmd.Flags().BoolVar(&withDiff, "diff", false, "show what changed on drifted/conflicted documents")
 	return cmd
 }
 
@@ -56,7 +59,7 @@ type statusReport struct {
 	Documents []statusRow `json:"documents"`
 }
 
-func (a *App) runStatus(asJSON bool) error {
+func (a *App) runStatus(asJSON, withDiff bool) error {
 	resolved, err := a.resolveConfig()
 	if err != nil {
 		return err
@@ -119,6 +122,9 @@ func (a *App) runStatus(asJSON bool) error {
 			}
 			fmt.Fprintf(a.Stdout, "%-28s %-12s %s\n", row.Filename, digest, row.Label)
 		}
+		if withDiff {
+			a.printDiffs(w, rows)
+		}
 	}
 
 	switch {
@@ -128,6 +134,32 @@ func (a *App) runStatus(asJSON bool) error {
 		return silentExit(ExitStale)
 	default:
 		return nil
+	}
+}
+
+// printDiffs appends a unified last-sync → local diff for every doc with
+// local edits — the same renderer the TUI diff screen uses, in plain mode.
+func (a *App) printDiffs(w *workspace.Workspace, rows []workspace.DocStatus) {
+	for _, row := range rows {
+		if row.Classification != state.Drifted && row.Classification != state.Conflicted {
+			continue
+		}
+		local, err := w.ReadLocal(row.Slug)
+		if err != nil || local == nil {
+			continue
+		}
+		fmt.Fprintf(a.Stdout, "\n── %s (%s)\n", row.Filename, row.Classification)
+		base := w.Base(row.Slug)
+		if base == nil {
+			fmt.Fprintln(a.Stdout, "no pristine base yet — sync once with this client to enable diffs")
+			continue
+		}
+		unified := diffx.Unified(row.Filename, base, local)
+		if unified == "" {
+			fmt.Fprintln(a.Stdout, "no changes")
+			continue
+		}
+		fmt.Fprint(a.Stdout, diffx.ColorizeIntraline(unified))
 	}
 }
 

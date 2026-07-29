@@ -55,6 +55,11 @@ func (a *App) runSync(force bool) error {
 		}
 		classification := w.State.Classify(doc.Slug, local, doc.Digest)
 
+		if classification == state.Synced && !force {
+			// Digest identity: nothing moved, nothing to fetch.
+			fmt.Fprintf(a.Stdout, "fresh %s\n", doc.Filename)
+			continue
+		}
 		if hasLocalEdits(classification) && !force {
 			if !interactive {
 				// Non-TTY contract: no prompt and no clobber, ever.

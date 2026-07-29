@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -33,8 +34,11 @@ type App struct {
 	stackVersion int
 	snapshot     *Snapshot
 	status       string
-	authModal    string
-	quitting     bool
+	// statusOffline marks that status holds the offline banner, so recovery
+	// clears it while sync summaries survive refreshes.
+	statusOffline bool
+	authModal     string
+	quitting      bool
 }
 
 // New builds the root model. markdownStyle "auto" follows the terminal.
@@ -64,6 +68,14 @@ func (a *App) Init() tea.Cmd {
 // failable lets the root intercept any message carrying an error — the
 // mid-session 401 modal works on every screen because of this.
 type failable interface{ failure() error }
+
+// editCmd suspends the program and opens path in the user's editor.
+func (a *App) editCmd(path string) tea.Cmd {
+	command := exec.Command(a.deps.Editor(), path)
+	return tea.ExecProcess(command, func(err error) tea.Msg {
+		return editorFinishedMsg{err: err}
+	})
+}
 
 func (m snapshotMsg) failure() error    { return m.err }
 func (m docLoadedMsg) failure() error   { return m.err }

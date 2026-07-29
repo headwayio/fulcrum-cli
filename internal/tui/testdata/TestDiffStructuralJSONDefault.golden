@@ -1,0 +1,13 @@
+[1mfulcrum[m[2m · Corpus Primary Organization · diff · drifted.json[m
+
+[2mlast sync → local edits (drifted)[m
+
+[1m--- a/drifted.json[m
+[1m+++ b/drifted.json[m
+[36m@@ -1 +1 @@[m
+[31m-{"status":"original","hours":4,"gone":true}[m
+\ No newline at end of file
+[32m+{"status":"edited","hours":6}[m
+\ No newline at end of file
+
+[2mu structured view · p publish · j/k scroll · e edit · esc back[m

@@ -2,12 +2,12 @@
 
 [2m7 document(s), 5 stale[m
 
-[1;35m> [m[1;35msynced.md[m          aaaabbbbcc   [32m= synced[m
-  drifted.json                 aaaabbbbcc   [33m~ drifted[m
-  behind.md                    eeeeffff00   [36mv behind[m
-  conflicted.json              eeeeffff00   [31m! CONFLICTED[m
-  proposed.json                aaaabbbbcc   [36m^ proposed[m
-  missing.md                   aaaabbbbcc   [31mx missing[m
-  applied.json                 aaaabbbbcc   [32m+ applied #7 (re-sync)[m
+[1;35m> [m[1;35msynced.md           [m aaaabbbbcc   [32m= synced[m
+  drifted.json         aaaabbbbcc   [33m~ drifted[m
+  behind.md            eeeeffff00   [36mv behind[m
+  conflicted.json      eeeeffff00   [31m! CONFLICTED[m
+  proposed.json        aaaabbbbcc   [36m^ proposed[m
+  missing.md           aaaabbbbcc   [31mx missing[m
+  applied.json         aaaabbbbcc   [32m+ applied #7 (re-sync)[m
 
-[2menter read · s sync · r refresh · f push-facts · q quit[m
+[2menter read · e edit · s sync · r refresh · f push-facts · q quit[m

@@ -23,6 +23,11 @@ type readerScreen struct {
 	query   string
 	errMsg  string
 	loaded  bool
+	// showingRemote is the behind-doc preview: what the server has now,
+	// before you re-sync over your (unchanged) local copy.
+	showingRemote bool
+	localLines    []string
+	remoteLines   []string
 }
 
 func newReaderScreen(a *App, row Row) *readerScreen {
@@ -55,12 +60,40 @@ func (s *readerScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.errMsg = errorLine(msg.err)
 			return s, nil
 		}
-		body := msg.local
-		if body == nil {
-			body = msg.remote
+		if msg.local != nil {
+			s.localLines = s.renderDocument(msg.local)
 		}
-		s.scroll.setLines(s.renderDocument(body))
+		if msg.remote != nil {
+			s.remoteLines = s.renderDocument(msg.remote)
+		}
+		if s.showingRemote && s.remoteLines != nil {
+			s.scroll.setLines(s.remoteLines)
+		} else if s.localLines != nil {
+			s.scroll.setLines(s.localLines)
+		} else {
+			s.scroll.setLines(s.remoteLines)
+		}
 		return s, nil
+
+	case syncedMsg:
+		if msg.err != nil {
+			s.app.status = errStyle.Render(errorLine(msg.err))
+			return s, nil
+		}
+		// Re-synced: back to the list with fresh classifications.
+		s.app.status = strings.Join(msg.lines, " · ")
+		s.app.pop()
+		if list, ok := s.app.stack[0].(*listScreen); ok {
+			return s, list.refreshCmd()
+		}
+		return s, nil
+
+	case editorFinishedMsg:
+		if msg.err != nil {
+			s.app.status = errStyle.Render("editor: " + msg.err.Error())
+			return s, nil
+		}
+		return s, s.init() // re-read the file the editor may have changed
 
 	case tea.KeyPressMsg:
 		key := msg.String()
@@ -88,11 +121,50 @@ func (s *readerScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				s.jumpToMatch(s.scroll.offset + 1)
 			}
 			return s, nil
+		case "e":
+			if path := s.app.deps.LocalPath(s.row.Slug); path != "" {
+				return s, s.app.editCmd(path)
+			}
+			s.app.status = "nothing local to edit"
+			return s, nil
+		case "v":
+			if s.row.Classification != state.Behind {
+				return s, nil
+			}
+			return s.toggleRemote()
+		case "s":
+			// Safe by construction: SyncAll(false) never clobbers local
+			// edits, and this doc (synced/behind) has none.
+			deps := s.app.deps
+			s.app.status = "syncing…"
+			return s, func() tea.Msg {
+				lines, err := deps.SyncAll(false)
+				return syncedMsg{lines: lines, err: err}
+			}
 		default:
 			s.scroll.handleKey(key, s.pageSize())
 		}
 	}
 	return s, nil
+}
+
+func (s *readerScreen) toggleRemote() (screen, tea.Cmd) {
+	if s.showingRemote {
+		s.showingRemote = false
+		s.scroll.setLines(s.localLines)
+		return s, nil
+	}
+	s.showingRemote = true
+	if s.remoteLines != nil {
+		s.scroll.setLines(s.remoteLines)
+		return s, nil
+	}
+	deps := s.app.deps
+	slug := s.row.Slug
+	return s, func() tea.Msg {
+		remote, err := deps.RemoteDoc(slug)
+		return docLoadedMsg{slug: slug, remote: remote, err: err}
+	}
 }
 
 // renderDocument splits frontmatter into header lines and Glamour-renders
@@ -165,16 +237,23 @@ func (s *readerScreen) view() string {
 
 	var b strings.Builder
 	if s.row.Classification == state.Behind {
+		viewing := "viewing your local copy (old)"
+		if s.showingRemote {
+			viewing = "viewing the REMOTE version"
+		}
 		b.WriteString(warnStyle.Render(fmt.Sprintf(
-			"remote moved: %s → %s — press s on the list to re-sync",
-			shortDigest(s.row.BaseDigest), shortDigest(s.row.RemoteDigest))) + "\n\n")
+			"remote moved: %s → %s — %s",
+			shortDigest(s.row.BaseDigest), shortDigest(s.row.RemoteDigest), viewing)) + "\n\n")
 	}
 	b.WriteString(s.scroll.view(s.pageSize()))
 	b.WriteString("\n\n")
 	if s.seeking {
 		b.WriteString("/" + s.search.render(true))
 	} else {
-		hint := "j/k scroll · / search · esc back"
+		hint := "j/k scroll · / search · e edit · esc back"
+		if s.row.Classification == state.Behind {
+			hint = "v local/remote · s re-sync · " + hint
+		}
 		if s.query != "" {
 			hint = "n next match · " + hint
 		}

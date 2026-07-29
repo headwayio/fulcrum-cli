@@ -79,3 +79,11 @@ type factsPushedMsg struct {
 type authFailedMsg struct {
 	message string
 }
+
+// editorFinishedMsg reports the $EDITOR handoff returning; the receiving
+// screen re-reads the file and reclassifies.
+type editorFinishedMsg struct {
+	err error
+}
+
+func (m editorFinishedMsg) failure() error { return m.err }

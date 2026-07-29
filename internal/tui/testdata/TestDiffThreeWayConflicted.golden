@@ -1,0 +1,16 @@
+[1mfulcrum[m[2m · Corpus Primary Organization · diff · conflicted.json[m
+
+[2mthree-way: base, your edits, remote (conflicted)[m
+
+[1mYOUR EDITS (base → local)[m
+[36m~ shared[m  [31m"base"[m → [32m"me"[m
+[36m~ status[m  [31m"base"[m → [32m"mine"[m
+
+[1mREMOTE CHANGES (base → remote)[m
+[32m+ extra = 1[m
+[36m~ shared[m  [31m"base"[m → [32m"them"[m
+
+[31m!! BOTH SIDES CHANGED:[m
+[31m   shared[m
+
+[2mu text diff · p publish · j/k scroll · e edit · esc back[m

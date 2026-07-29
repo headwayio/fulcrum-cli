@@ -220,6 +220,99 @@ func TestReaderRendersFrontmatterAsHeader(t *testing.T) {
 	teatest.RequireEqualOutput(t, finalFrame(t, h))
 }
 
+// --- diff views ---
+
+func TestDiffStructuralJSONDefault(t *testing.T) {
+	deps := &fakeDeps{
+		configured: true, serverURL: "http://srv", snapshot: allStatesSnapshot(),
+		localDocs: map[string][]byte{"doc-drifted": []byte(`{"status":"edited","hours":6}`)},
+		baseDocs:  map[string][]byte{"doc-drifted": []byte(`{"status":"original","hours":4,"gone":true}`)},
+	}
+	h := newTestModel(t, deps)
+	waitContains(t, h, "drifted.json")
+
+	h.Type("j")
+	h.Send(enter()) // drifted → diff screen, structural by default for JSON
+	waitContains(t, h, `~ hours  4 → 6`)
+	waitContains(t, h, `~ status  "original" → "edited"`)
+	waitContains(t, h, `- gone = true`)
+
+	// u toggles to the unified text diff and back.
+	h.Type("u")
+	waitContains(t, h, "--- a/drifted.json")
+	waitContains(t, h, "u structured view")
+
+	teatest.RequireEqualOutput(t, finalFrame(t, h))
+}
+
+func TestDiffThreeWayConflicted(t *testing.T) {
+	deps := &fakeDeps{
+		configured: true, serverURL: "http://srv", snapshot: allStatesSnapshot(),
+		localDocs:  map[string][]byte{"doc-conflict": []byte(`{"status":"mine","shared":"me"}`)},
+		baseDocs:   map[string][]byte{"doc-conflict": []byte(`{"status":"base","shared":"base"}`)},
+		remoteDocs: map[string][]byte{"doc-conflict": []byte(`{"status":"base","shared":"them","extra":1}`)},
+	}
+	h := newTestModel(t, deps)
+	waitContains(t, h, "conflicted.json")
+
+	h.Type("jjj") // cursor to the conflicted row
+	h.Send(enter())
+	waitContains(t, h, "YOUR EDITS (base → local)")
+	waitContains(t, h, "REMOTE CHANGES (base → remote)")
+	// The path both sides touched is named as the real conflict.
+	waitContains(t, h, "BOTH SIDES CHANGED:")
+	waitContains(t, h, "shared")
+
+	teatest.RequireEqualOutput(t, finalFrame(t, h))
+}
+
+// --- reader: behind-doc remote preview + re-sync ---
+
+func TestReaderBehindPreviewsRemote(t *testing.T) {
+	deps := &fakeDeps{
+		configured: true, serverURL: "http://srv", snapshot: allStatesSnapshot(),
+		localDocs:  map[string][]byte{"doc-behind": []byte("# Old local copy\n")},
+		remoteDocs: map[string][]byte{"doc-behind": []byte("# Fresh remote content\n")},
+		syncLines:  []string{"synced behind.md"},
+	}
+	h := newTestModel(t, deps)
+	waitContains(t, h, "behind.md")
+
+	h.Type("jj") // cursor to the behind row
+	h.Send(enter())
+	waitContains(t, h, "remote moved")
+	waitContains(t, h, "Old local copy")
+
+	h.Type("v") // preview what the server has before re-syncing
+	// Needle avoids the "viewing " prefix shared with the previous banner:
+	// the cell-diff renderer only emits changed spans, so a needle spanning
+	// unchanged and changed cells never appears contiguously in the stream.
+	waitContains(t, h, "REMOTE version")
+	waitContains(t, h, "Fresh remote content")
+
+	h.Type("s") // safe re-sync: back on the list with the result
+	waitContains(t, h, "synced behind.md")
+
+	teatest.RequireEqualOutput(t, finalFrame(t, h))
+}
+
+// --- $EDITOR handoff ---
+
+func TestEditorHandoffRefreshes(t *testing.T) {
+	deps := &fakeDeps{
+		configured: true, serverURL: "http://srv", snapshot: allStatesSnapshot(),
+		localDocs: map[string][]byte{"doc-synced": []byte("# doc\n")},
+	}
+	h := newTestModel(t, deps)
+	waitContains(t, h, "synced.md")
+	before := deps.refreshes
+
+	h.Type("e") // fake editor exits immediately; the list must reclassify
+	teatest.WaitFor(t, h.tm.Output(), func([]byte) bool {
+		return deps.refreshes > before
+	}, teatest.WithDuration(3*time.Second))
+}
+
 // --- mid-session 401 ---
 
 func Test401RaisesReauthModal(t *testing.T) {

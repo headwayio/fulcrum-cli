@@ -10,17 +10,27 @@ import (
 	"github.com/headwayio/fulcrum-cli/internal/state"
 )
 
-// diffScreen shows pristine-base → local as a unified diff. For conflicted
-// docs the remote also moved; the header says so plainly (the three-way
-// panel is v1.1, see DECISIONS.md).
+// diffScreen shows what changed since the last sync. JSON documents default
+// to the structural path-level view (u toggles the unified text diff);
+// markdown gets a unified diff with word-level intraline highlights. A
+// conflicted doc becomes a three-way panel: your edits and the remote's
+// changes, both against the shared base, with overlapping paths called out.
 type diffScreen struct {
 	app *App
 	row Row
 
-	scroll scroller
-	loaded bool
-	errMsg string
-	empty  bool
+	scroll     scroller
+	loaded     bool
+	errMsg     string
+	empty      bool
+	unifiedRaw string // text diff base → local
+	structural []string
+	threeWay   []string
+	showText   bool // u: force the unified text view for JSON docs
+
+	local  []byte
+	base   []byte
+	remote []byte
 }
 
 func newDiffScreen(a *App, row Row) *diffScreen {
@@ -30,12 +40,20 @@ func newDiffScreen(a *App, row Row) *diffScreen {
 func (s *diffScreen) init() tea.Cmd {
 	deps := s.app.deps
 	slug := s.row.Slug
+	conflicted := s.row.Classification == state.Conflicted
 	return func() tea.Msg {
 		local, err := deps.LocalDoc(slug)
 		if err != nil {
 			return docLoadedMsg{slug: slug, err: err}
 		}
-		return docLoadedMsg{slug: slug, local: local, base: deps.BaseDoc(slug)}
+		msg := docLoadedMsg{slug: slug, local: local, base: deps.BaseDoc(slug)}
+		if conflicted {
+			// The third side: what the server has now.
+			if remote, remoteErr := deps.RemoteDoc(slug); remoteErr == nil {
+				msg.remote = remote
+			}
+		}
+		return msg
 	}
 }
 
@@ -55,22 +73,107 @@ func (s *diffScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.errMsg = "no pristine base for this document yet — run sync once with this client, edit, and return"
 			return s, nil
 		}
-		unified := diffx.Unified(s.row.Filename, msg.base, msg.local)
-		if unified == "" {
-			s.empty = true
+		s.local, s.base, s.remote = msg.local, msg.base, msg.remote
+		s.rebuild()
+		return s, nil
+
+	case editorFinishedMsg:
+		if msg.err != nil {
+			s.app.status = errStyle.Render("editor: " + msg.err.Error())
 			return s, nil
 		}
-		s.scroll.setLines(strings.Split(strings.TrimRight(diffx.Colorize(unified), "\n"), "\n"))
-		return s, nil
+		return s, s.init() // recompute against the edited file
 
 	case tea.KeyPressMsg:
 		key := msg.String()
-		if key == "p" && s.row.Format == "json" && s.row.ProposalSlug != "" {
-			return s, s.app.push(newPublishScreen(s.app, s.row))
+		switch key {
+		case "p":
+			if s.row.Format == "json" && s.row.ProposalSlug != "" {
+				return s, s.app.push(newPublishScreen(s.app, s.row))
+			}
+		case "e":
+			if path := s.app.deps.LocalPath(s.row.Slug); path != "" {
+				return s, s.app.editCmd(path)
+			}
+		case "u":
+			if s.structural != nil || s.threeWay != nil {
+				s.showText = !s.showText
+				s.scroll.setLines(s.currentLines())
+			}
+		default:
+			s.scroll.handleKey(key, s.pageSize())
 		}
-		s.scroll.handleKey(key, s.pageSize())
 	}
 	return s, nil
+}
+
+// rebuild derives every view from the loaded documents.
+func (s *diffScreen) rebuild() {
+	s.unifiedRaw = diffx.Unified(s.row.Filename, s.base, s.local)
+	s.structural, s.threeWay = nil, nil
+	s.empty = s.unifiedRaw == "" && s.remote == nil
+
+	if s.row.Format == "json" {
+		if s.remote != nil {
+			s.threeWay = s.buildThreeWay()
+		} else if ours, err := diffx.JSONStructural(s.base, s.local); err == nil {
+			s.structural = diffx.RenderJSONChanges(ours)
+		}
+	} else if s.remote != nil {
+		s.threeWay = s.buildTextThreeWay()
+	}
+	s.scroll.setLines(s.currentLines())
+}
+
+// buildThreeWay renders both sides' structural changes against the shared
+// base, then names the paths BOTH touched — those are the real conflicts.
+func (s *diffScreen) buildThreeWay() []string {
+	ours, ourErr := diffx.JSONStructural(s.base, s.local)
+	theirs, theirErr := diffx.JSONStructural(s.base, s.remote)
+	if ourErr != nil || theirErr != nil {
+		return s.buildTextThreeWay() // unparseable side: fall back to text
+	}
+
+	lines := []string{titleStyle.Render("YOUR EDITS (base → local)")}
+	lines = append(lines, diffx.RenderJSONChanges(ours)...)
+	lines = append(lines, "", titleStyle.Render("REMOTE CHANGES (base → remote)"))
+	lines = append(lines, diffx.RenderJSONChanges(theirs)...)
+
+	if overlap := diffx.ConflictPaths(ours, theirs); len(overlap) > 0 {
+		lines = append(lines, "", errStyle.Render("!! BOTH SIDES CHANGED:"))
+		for _, path := range overlap {
+			lines = append(lines, errStyle.Render("   "+path))
+		}
+	} else {
+		lines = append(lines, "", okStyle.Render("no overlapping paths — the reviewer can likely take both"))
+	}
+	return lines
+}
+
+func (s *diffScreen) buildTextThreeWay() []string {
+	lines := []string{titleStyle.Render("YOUR EDITS (base → local)")}
+	lines = append(lines, splitDiff(diffx.ColorizeIntraline(diffx.Unified(s.row.Filename, s.base, s.local)))...)
+	lines = append(lines, "", titleStyle.Render("REMOTE CHANGES (base → remote)"))
+	lines = append(lines, splitDiff(diffx.ColorizeIntraline(diffx.Unified(s.row.Filename, s.base, s.remote)))...)
+	return lines
+}
+
+func (s *diffScreen) currentLines() []string {
+	switch {
+	case s.showText || (s.structural == nil && s.threeWay == nil):
+		return splitDiff(diffx.ColorizeIntraline(s.unifiedRaw))
+	case s.threeWay != nil:
+		return s.threeWay
+	default:
+		return s.structural
+	}
+}
+
+func splitDiff(colored string) []string {
+	if colored == "" {
+		return []string{dimStyle.Render("no changes")}
+	}
+	return strings.Split(strings.TrimRight(colored, "\n"), "\n")
 }
 
 func (s *diffScreen) pageSize() int { return max(s.app.height-8, 4) }
@@ -89,15 +192,23 @@ func (s *diffScreen) view() string {
 	var b strings.Builder
 	header := fmt.Sprintf("last sync → local edits (%s)", s.row.Classification)
 	if s.row.Classification == state.Conflicted {
-		header += errStyle.Render("  — remote ALSO moved; a proposal will be flagged stale")
+		header = fmt.Sprintf("three-way: base, your edits, remote (%s)", s.row.Classification)
 	}
 	b.WriteString(dimStyle.Render(header) + "\n\n")
 	b.WriteString(s.scroll.view(s.pageSize()))
 	b.WriteString("\n\n")
-	hint := "j/k scroll · esc back"
+
+	hints := []string{"j/k scroll", "e edit", "esc back"}
 	if s.row.Format == "json" && s.row.ProposalSlug != "" {
-		hint = "p publish · " + hint
+		hints = append([]string{"p publish"}, hints...)
 	}
-	b.WriteString(dimStyle.Render(hint + s.scroll.position(s.pageSize())))
+	if s.structural != nil || s.threeWay != nil {
+		toggle := "u text diff"
+		if s.showText {
+			toggle = "u structured view"
+		}
+		hints = append([]string{toggle}, hints...)
+	}
+	b.WriteString(dimStyle.Render(strings.Join(hints, " · ") + s.scroll.position(s.pageSize())))
 	return b.String()
 }

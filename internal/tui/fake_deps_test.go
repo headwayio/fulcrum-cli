@@ -36,6 +36,7 @@ type fakeDeps struct {
 	pushedTo  []int64
 	opened    []string
 	syncLines []string
+	refreshes int
 }
 
 func (f *fakeDeps) Configured() (bool, error) { return f.configured, nil }
@@ -54,6 +55,7 @@ func (f *fakeDeps) SaveLogin(url, token, orgID string) (string, error) {
 }
 
 func (f *fakeDeps) Refresh() (*Snapshot, error) {
+	f.refreshes++
 	if f.refreshErr != nil {
 		return nil, f.refreshErr
 	}
@@ -63,6 +65,17 @@ func (f *fakeDeps) Refresh() (*Snapshot, error) {
 func (f *fakeDeps) LocalDoc(slug string) ([]byte, error)  { return f.localDocs[slug], nil }
 func (f *fakeDeps) BaseDoc(slug string) []byte            { return f.baseDocs[slug] }
 func (f *fakeDeps) RemoteDoc(slug string) ([]byte, error) { return f.remoteDocs[slug], nil }
+
+func (f *fakeDeps) LocalPath(slug string) string {
+	if f.localDocs[slug] == nil {
+		return ""
+	}
+	return "/fake/workspace/" + slug
+}
+
+// Editor is `true`: exits 0 instantly, proving the handoff/refresh loop
+// without a real editor.
+func (f *fakeDeps) Editor() string { return "true" }
 
 func (f *fakeDeps) SyncAll(force bool) ([]string, error) { return f.syncLines, nil }
 

@@ -9,6 +9,14 @@ fulcrum -code 1 sync
 grep 'skipped estimation-rubric.json' last-stderr.txt
 grep 'skipped to protect local edits' last-stderr.txt
 cmp skills/estimation-rubric.json edited.json
+# The untouched markdown is digest-fresh: no re-download, no rewrite.
+grep 'fresh estimation-rubric.md' last-stdout.txt
+
+# status --diff shows WHAT changed, same renderer as the TUI diff screen.
+fulcrum -code 1 status --diff
+grep 'estimation-rubric.json .drifted.' last-stdout.txt
+grep 'edited-locally' last-stdout.txt
+grep 'rubric_id' last-stdout.txt
 
 fulcrum sync --force
 cmp skills/estimation-rubric.json $CORPUS/documents/estimation-rubric.json

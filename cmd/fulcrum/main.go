@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime/debug"
 
+	"github.com/charmbracelet/colorprofile"
 	"github.com/mattn/go-isatty"
 
 	"github.com/headwayio/fulcrum-cli/internal/cli"
@@ -24,8 +25,10 @@ func main() {
 		os.Exit(runTUI())
 	}
 	app := &cli.App{
-		Stdout:  os.Stdout,
-		Stderr:  os.Stderr,
+		// colorprofile downsamples styled output to what the terminal
+		// supports — and strips ANSI entirely when piped.
+		Stdout:  colorprofile.NewWriter(os.Stdout, os.Environ()),
+		Stderr:  colorprofile.NewWriter(os.Stderr, os.Environ()),
 		Stdin:   os.Stdin,
 		Version: resolveVersion(),
 	}

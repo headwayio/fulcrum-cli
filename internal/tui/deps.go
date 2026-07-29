@@ -6,7 +6,9 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 
 	"github.com/headwayio/fulcrum-cli/internal/api"
@@ -64,8 +66,14 @@ type Deps interface {
 	Refresh() (*Snapshot, error)
 
 	LocalDoc(slug string) ([]byte, error)
+	// LocalPath is the absolute path of the synced file — what $EDITOR opens.
+	// Empty when the document was never synced here.
+	LocalPath(slug string) string
 	BaseDoc(slug string) []byte
 	RemoteDoc(slug string) ([]byte, error)
+
+	// Editor is the command that edits files ($EDITOR, fallback vi).
+	Editor() string
 
 	// SyncAll pulls fresh docs, skipping local edits unless force; returns
 	// human summary lines.
@@ -84,6 +92,11 @@ type Deps interface {
 type Live struct {
 	Resolved *config.Resolved
 	Version  string
+
+	// Conditional-GET cache: the manifest ETag from the last fetch buys a
+	// 304 on every refresh until the rubric actually moves.
+	lastManifest *api.Manifest
+	manifestETag string
 }
 
 func (l *Live) client() *api.Client {
@@ -142,7 +155,10 @@ func (l *Live) Refresh() (*Snapshot, error) {
 	}
 	snapshot := &Snapshot{Reachable: true}
 
-	manifest, _, fetchErr := l.client().Manifest(context.Background(), "")
+	manifest, res, fetchErr := l.client().Manifest(context.Background(), l.manifestETag)
+	if fetchErr == nil && res != nil && res.NotModified {
+		manifest = l.lastManifest // 304: the cached manifest is current
+	}
 	if fetchErr != nil {
 		if _, isContract := api.AsError(fetchErr); isContract {
 			return nil, fetchErr // auth/contract problems are not offline mode
@@ -150,6 +166,9 @@ func (l *Live) Refresh() (*Snapshot, error) {
 		snapshot.Reachable = false
 		snapshot.NetErr = fetchErr.Error()
 	} else {
+		if res != nil && !res.NotModified {
+			l.lastManifest, l.manifestETag = manifest, res.ETag
+		}
 		snapshot.Manifest = manifest
 		snapshot.OrgName = manifest.Organization.Name
 		if manifest.User != nil {
@@ -217,6 +236,25 @@ func (l *Live) LocalDoc(slug string) ([]byte, error) {
 	return w.ReadLocal(slug)
 }
 
+func (l *Live) LocalPath(slug string) string {
+	w, err := l.workspace()
+	if err != nil {
+		return ""
+	}
+	recorded := w.State.Document(slug)
+	if recorded == nil {
+		return ""
+	}
+	return filepath.Join(w.Dir, recorded.Filename)
+}
+
+func (l *Live) Editor() string {
+	if editor := os.Getenv("EDITOR"); editor != "" {
+		return editor
+	}
+	return "vi"
+}
+
 func (l *Live) BaseDoc(slug string) []byte {
 	w, err := l.workspace()
 	if err != nil {
@@ -249,6 +287,11 @@ func (l *Live) SyncAll(force bool) ([]string, error) {
 			return lines, readErr
 		}
 		c := w.State.Classify(doc.Slug, local, doc.Digest)
+		if !force && c == state.Synced {
+			// Digest identity: nothing moved, so there is nothing to fetch.
+			lines = append(lines, fmt.Sprintf("fresh %s", doc.Filename))
+			continue
+		}
 		if !force && (c == state.Drifted || c == state.Conflicted || c == state.Proposed) {
 			lines = append(lines, fmt.Sprintf("skipped %s (%s — local edits kept)", doc.Filename, c))
 			continue

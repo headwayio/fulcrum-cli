@@ -17,7 +17,7 @@ func (a *App) Root() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runStatus(false)
+			return a.runStatus(false, false)
 		},
 	}
 	root.SetOut(a.Stdout)

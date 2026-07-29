@@ -53,9 +53,14 @@ func (s *listScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		if !msg.snapshot.Reachable {
 			s.app.status = errStyle.Render("offline: " + msg.snapshot.NetErr + " — showing last-known state")
-		} else {
+			s.app.statusOffline = true
+		} else if s.app.statusOffline {
 			s.app.status = ""
+			s.app.statusOffline = false
 		}
+		// Otherwise a reachable refresh leaves the status line alone: it
+		// often carries the just-finished sync summary, and refreshes
+		// follow syncs.
 		return s, nil
 
 	case syncedMsg:
@@ -66,6 +71,13 @@ func (s *listScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		s.app.status = strings.Join(msg.lines, " · ")
 		return s, s.refreshCmd()
+
+	case editorFinishedMsg:
+		if msg.err != nil {
+			s.app.status = errStyle.Render("editor: " + msg.err.Error())
+			return s, nil
+		}
+		return s, s.refreshCmd() // reclassify whatever the edit changed
 
 	case tea.KeyPressMsg:
 		return s.handleKey(msg.String())
@@ -116,6 +128,16 @@ func (s *listScreen) handleKey(key string) (screen, tea.Cmd) {
 			return s, nil
 		}
 		return s, s.app.push(newPushFactsScreen(s.app))
+	case "e":
+		if len(rows) == 0 {
+			return s, nil
+		}
+		path := s.app.deps.LocalPath(rows[s.cursor].Slug)
+		if path == "" {
+			s.app.status = "nothing local to edit — press s to sync first"
+			return s, nil
+		}
+		return s, s.app.editCmd(path)
 	}
 	return s, nil
 }
@@ -181,9 +203,18 @@ func (s *listScreen) view() string {
 	}
 	b.WriteString(dimStyle.Render(freshness) + "\n\n")
 
+	// Columns are padded BEFORE styling: ANSI escapes have width zero on
+	// screen but not in fmt's %-Ns accounting, so styling first skews every
+	// styled row's columns.
+	nameWidth := 20
+	for _, row := range rows {
+		if w := len(row.Filename) + 2; w > nameWidth {
+			nameWidth = w
+		}
+	}
 	for i, row := range rows {
 		marker := "  "
-		name := row.Filename
+		name := fmt.Sprintf("%-*s", nameWidth, row.Filename)
 		if i == s.cursor {
 			marker = selectedStyle.Render("> ")
 			name = selectedStyle.Render(name)
@@ -192,7 +223,7 @@ func (s *listScreen) view() string {
 		if row.Outcome != "" {
 			label = outcomeBadge(row.Outcome, row.OutcomeID)
 		}
-		b.WriteString(fmt.Sprintf("%s%-28s %-12s %s\n", marker, name, shortDigest(row.RemoteDigest), label))
+		b.WriteString(fmt.Sprintf("%s%s %-12s %s\n", marker, name, shortDigest(row.RemoteDigest), label))
 	}
 
 	b.WriteString("\n" + dimStyle.Render(s.hints(rows[s.cursor])))
@@ -209,7 +240,7 @@ func (s *listScreen) hints(row Row) string {
 		state.Missing:    "—",
 		state.Unsynced:   "—",
 	}[row.Classification]
-	hints := []string{"enter " + enterVerb, "s sync", "r refresh", "f push-facts", "q quit"}
+	hints := []string{"enter " + enterVerb, "e edit", "s sync", "r refresh", "f push-facts", "q quit"}
 	if row.Format == "json" && row.ProposalSlug != "" {
 		hints = append(hints[:1], append([]string{"p publish"}, hints[1:]...)...)
 	}

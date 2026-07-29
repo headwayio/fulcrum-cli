@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -114,6 +115,10 @@ func (s *publishScreen) submit() (screen, tea.Cmd) {
 		local, err := deps.LocalDoc(row.Slug)
 		if err != nil {
 			return publishedMsg{err: err}
+		}
+		if diffx.HasConflictMarkers(local) {
+			return publishedMsg{err: errors.New(
+				"unresolved conflict markers in the file — resolve them (e) before publishing")}
 		}
 		var document map[string]any
 		if row.Format == "json" {

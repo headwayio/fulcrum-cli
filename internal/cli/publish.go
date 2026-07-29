@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/headwayio/fulcrum-cli/internal/api"
+	"github.com/headwayio/fulcrum-cli/internal/diffx"
 	"github.com/headwayio/fulcrum-cli/internal/state"
 )
 
@@ -70,9 +71,15 @@ func (a *App) runPublish(yes bool, note string) error {
 			continue
 		}
 
+		if diffx.HasConflictMarkers(local) {
+			fmt.Fprintf(a.Stdout, "%s: unresolved conflict markers — resolve them, nothing submitted\n",
+				doc.Filename)
+			continue
+		}
+
 		if classification == state.Conflicted {
 			fmt.Fprintf(a.Stdout, "%s: remote moved since your sync — your proposal will be "+
-				"flagged stale for the reviewer.\n", doc.Filename)
+				"flagged stale for the reviewer (`fulcrum merge` fixes that).\n", doc.Filename)
 		}
 
 		if !yes && !a.confirm(fmt.Sprintf("Publish your edits to %s as a proposal?", doc.Filename)) {

@@ -88,6 +88,15 @@ type editorFinishedMsg struct {
 
 func (m editorFinishedMsg) failure() error { return m.err }
 
+// mergedMsg reports a three-way merge of the server's version into a
+// conflicted working file.
+type mergedMsg struct {
+	outcome *MergeOutcome
+	err     error
+}
+
+func (m mergedMsg) failure() error { return m.err }
+
 // draftCreatedMsg reports a freshly minted creator-only draft skill.
 type draftCreatedMsg struct {
 	draft *api.SkillDraft

@@ -29,6 +29,11 @@ and TUI are landing next. Nothing is tagged yet.
    fulcrum sync     # documents land in ~/.fulcrum/skills
    ```
 
+When a document moved on both sides, `fulcrum merge` (or `m` in the TUI)
+three-way merges the server's version into yours against the copy from your
+last sync — clean where the changes do not overlap, git-style conflict
+markers where they do.
+
 Then run `fulcrum` with no arguments for the interactive view, or script it:
 `fulcrum status --json` exits 0 when everything is fresh, 1 when anything is
 behind/drifted/conflicted, 2 on network/auth/config errors. Your org's shared

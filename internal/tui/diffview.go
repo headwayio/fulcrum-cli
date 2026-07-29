@@ -84,12 +84,39 @@ func (s *diffScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		return s, s.init() // recompute against the edited file
 
+	case mergedMsg:
+		if msg.err != nil {
+			s.app.status = errStyle.Render(errorLine(msg.err))
+			return s, nil
+		}
+		if msg.outcome.Conflicts > 0 {
+			s.app.status = warnStyle.Render(fmt.Sprintf(
+				"%s: %d conflict(s) — press e to resolve", msg.outcome.Filename, msg.outcome.Conflicts))
+		} else {
+			s.app.status = okStyle.Render(msg.outcome.Filename + " merged cleanly — ready to publish")
+		}
+		s.app.pop()
+		if list, ok := s.app.stack[0].(*listScreen); ok {
+			return s, list.refreshCmd()
+		}
+		return s, nil
+
 	case tea.KeyPressMsg:
 		key := msg.String()
 		switch key {
 		case "p":
 			if s.row.Format == "json" && s.row.ProposalSlug != "" {
 				return s, s.app.push(newPublishScreen(s.app, s.row))
+			}
+		case "m":
+			if s.row.Classification == state.Conflicted {
+				deps := s.app.deps
+				slug := s.row.Slug
+				s.app.status = "merging…"
+				return s, func() tea.Msg {
+					outcome, err := deps.MergeRemote(slug)
+					return mergedMsg{outcome: outcome, err: err}
+				}
 			}
 		case "e":
 			if path := s.app.deps.LocalPath(s.row.Slug); path != "" {
@@ -201,6 +228,9 @@ func (s *diffScreen) view() string {
 	hints := []string{"j/k scroll", "e edit", "esc back"}
 	if s.row.Format == "json" && s.row.ProposalSlug != "" {
 		hints = append([]string{"p publish"}, hints...)
+	}
+	if s.row.Classification == state.Conflicted {
+		hints = append([]string{"m merge the remote in"}, hints...)
 	}
 	if s.structural != nil || s.threeWay != nil {
 		toggle := "u text diff"

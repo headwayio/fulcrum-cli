@@ -9,6 +9,30 @@ everywhere under the `charm.land` module paths. **Never straddle**: no v1
 charm dependency may enter the graph, and any future major bump migrates the
 whole set in one change.
 
+## 2026-07-29 — The workspace is not a git repo
+
+Sync state is three content snapshots plus SHA-256 digests: the pristine copy
+from the last sync (`.fulcrum/base/`), the working file, and the server's
+digest recorded at that sync. Classification compares hashes; diffs and
+merges run over the snapshots. That is the same *shape* as a git merge base,
+without a git object database.
+
+We keep it that way. The workspace is shared with the feature-frozen Ruby
+client, which knows nothing about git; the server is already the versioned
+store (skill versions carry their own provenance); and making the directory a
+repo would mean inventing synthetic branches for "what the server has" —
+mapping fulcrum's model onto git's rather than the reverse. What git actually
+buys — a real three-way merge — we implement directly in `internal/diffx`,
+verified to produce byte-identical output to `git merge-file` on the same
+inputs.
+
+External merge tools stay reachable through the standard interchange format:
+a conflicted merge writes git-style conflict markers, and `e` hands the file
+to `$EDITOR`, so lazygit, nvim's diff mode, or anything else works without
+fulcrum knowing about them. If a workspace git history is ever wanted for
+browsing, that is an additive follow-up (init a repo, commit on sync) and does
+not change the model above.
+
 ## 2026-07-29 — TUI v1 diff descope
 
 Diffs render as unified *text* diffs (go-udiff, lipgloss-colored) for JSON

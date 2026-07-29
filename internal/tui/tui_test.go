@@ -314,6 +314,44 @@ func TestEditorHandoffRefreshes(t *testing.T) {
 	}, teatest.WithDuration(3*time.Second))
 }
 
+// --- merging a conflicted document ---
+
+func TestMergeConflictedFromTheList(t *testing.T) {
+	deps := &fakeDeps{configured: true, serverURL: "http://srv", snapshot: allStatesSnapshot()}
+	h := newTestModel(t, deps)
+	waitContains(t, h, "conflicted.json")
+
+	// m is offered on the conflicted row and refused elsewhere.
+	h.Type("m")
+	waitContains(t, h, "merge applies to conflicted documents")
+	if len(deps.merged) != 0 {
+		t.Fatalf("merge ran on a non-conflicted row: %v", deps.merged)
+	}
+
+	h.Type("jjj") // to the conflicted row
+	waitContains(t, h, "m merge")
+	h.Type("m")
+	waitContains(t, h, "merged cleanly")
+	waitContains(t, h, "ready to publish")
+	if len(deps.merged) != 1 || deps.merged[0] != "doc-conflict" {
+		t.Errorf("merged = %v", deps.merged)
+	}
+}
+
+func TestMergeReportsConflictMarkers(t *testing.T) {
+	deps := &fakeDeps{
+		configured: true, serverURL: "http://srv", snapshot: allStatesSnapshot(),
+		mergeConflicts: 2,
+	}
+	h := newTestModel(t, deps)
+	waitContains(t, h, "conflicted.json")
+
+	h.Type("jjj")
+	h.Type("m")
+	waitContains(t, h, "2 conflict(s)")
+	waitContains(t, h, "press e to resolve")
+}
+
 // --- new-skill draft flow ---
 
 func TestDraftSkillFlow(t *testing.T) {

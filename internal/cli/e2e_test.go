@@ -124,6 +124,15 @@ func cmdSrv(ts *testscript.TestScript, neg bool, args []string) {
 		if got := srv.proposalCount(); got != want {
 			ts.Fatalf("server has %d proposal(s), want %d", got, want)
 		}
+	case "edit":
+		// srv edit <slug> <find> <replace-with> — a server-side edit that
+		// moves the document's digest, the other half of a conflict.
+		if len(args) != 4 {
+			ts.Fatalf("usage: srv edit <slug> <find> <replacement>")
+		}
+		if !srv.editDocument(args[1], args[2], args[3]) {
+			ts.Fatalf("srv edit: %q not found in %s", args[2], args[1])
+		}
 	default:
 		ts.Fatalf("unknown srv subcommand %q", args[0])
 	}

@@ -39,6 +39,10 @@ type fakeDeps struct {
 	refreshes int
 	drafted   []string
 	draftErr  error
+
+	merged         []string
+	mergeConflicts int
+	mergeErr       error
 }
 
 func (f *fakeDeps) Configured() (bool, error) { return f.configured, nil }
@@ -80,6 +84,14 @@ func (f *fakeDeps) LocalPath(slug string) string {
 func (f *fakeDeps) Editor() string { return "true" }
 
 func (f *fakeDeps) SyncAll(force bool) ([]string, error) { return f.syncLines, nil }
+
+func (f *fakeDeps) MergeRemote(slug string) (*MergeOutcome, error) {
+	if f.mergeErr != nil {
+		return nil, f.mergeErr
+	}
+	f.merged = append(f.merged, slug)
+	return &MergeOutcome{Filename: slug + ".md", Conflicts: f.mergeConflicts}, nil
+}
 
 func (f *fakeDeps) CreateSkillDraft(name string) (*api.SkillDraft, error) {
 	if f.draftErr != nil {

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -21,6 +22,10 @@ type fixtureServer struct {
 	proposals []map[string]any
 	drafts    []map[string]any
 	nextID    int64
+	// Server-side edits to corpus documents, so a script can move a document
+	// out from under the workspace and produce a real conflict.
+	overrides map[string]string
+	revisions int
 }
 
 const fixtureToken = "corpus-token"
@@ -34,21 +39,28 @@ func corpusFile(parts ...string) []byte {
 }
 
 func newFixtureServer() *fixtureServer {
-	f := &fixtureServer{nextID: 101}
+	f := &fixtureServer{nextID: 101, overrides: map[string]string{}}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/agent_context/skills", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		if len(f.drafts) == 0 {
+		if len(f.drafts) == 0 && len(f.overrides) == 0 {
 			w.Write(corpusFile("manifest.json"))
 			return
 		}
-		// Session drafts append to the corpus manifest, like the server's
-		// creator-only rows.
 		var manifest map[string]any
 		json.Unmarshal(corpusFile("manifest.json"), &manifest)
 		docs := manifest["documents"].([]any)
+		// Server-side edits move the document's digest, exactly as a real
+		// edit would.
+		for _, entry := range docs {
+			row := entry.(map[string]any)
+			if content, edited := f.overrides[row["slug"].(string)]; edited {
+				row["digest"] = fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+			}
+		}
+		// Session drafts append, like the server's creator-only rows.
 		for _, d := range f.drafts {
 			row := map[string]any{}
 			for k, v := range d {
@@ -95,7 +107,17 @@ func newFixtureServer() *fixtureServer {
 		json.NewEncoder(w).Encode(draft)
 	})
 	mux.HandleFunc("/api/agent_context/skills/", func(w http.ResponseWriter, r *http.Request) {
-		switch strings.TrimPrefix(r.URL.Path, "/api/agent_context/skills/") {
+		requested := strings.TrimPrefix(r.URL.Path, "/api/agent_context/skills/")
+		f.mu.Lock()
+		content, edited := f.overrides[requested]
+		f.mu.Unlock()
+		if edited {
+			w.Header().Set("Content-Type", "text/markdown")
+			w.Write([]byte(content))
+			return
+		}
+
+		switch requested {
 		case "estimation-rubric":
 			w.Header().Set("Content-Type", "text/markdown")
 			w.Write(corpusFile("documents", "estimation-rubric.md"))
@@ -222,6 +244,32 @@ func (f *fixtureServer) proposalCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.proposals)
+}
+
+// editDocument rewrites a corpus document server-side: the manifest digest
+// moves and the body changes, which is what a real edit in Fulcrum looks
+// like to a client that already synced.
+func (f *fixtureServer) editDocument(slug, replace, with string) bool {
+	base := map[string]string{
+		"skill-corpus-writing-specs": "documents/skill-corpus-writing-specs.md",
+		"estimation-rubric":          "documents/estimation-rubric.md",
+	}[slug]
+	if base == "" {
+		return false
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	current, edited := f.overrides[slug]
+	if !edited {
+		current = string(corpusFile(filepath.FromSlash(base)))
+	}
+	if !strings.Contains(current, replace) {
+		return false
+	}
+	f.overrides[slug] = strings.Replace(current, replace, with, 1)
+	f.revisions++
+	return true
 }
 
 func parseID(s string) int64 {

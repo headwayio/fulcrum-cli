@@ -72,6 +72,20 @@ func (s *listScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.app.status = strings.Join(msg.lines, " · ")
 		return s, s.refreshCmd()
 
+	case mergedMsg:
+		if msg.err != nil {
+			s.app.status = errStyle.Render(errorLine(msg.err))
+			return s, nil
+		}
+		// Kept short: a status line that wraps is a status line nobody reads.
+		if msg.outcome.Conflicts > 0 {
+			s.app.status = warnStyle.Render(fmt.Sprintf(
+				"%s: %d conflict(s) — press e to resolve", msg.outcome.Filename, msg.outcome.Conflicts))
+		} else {
+			s.app.status = okStyle.Render(msg.outcome.Filename + " merged cleanly — ready to publish")
+		}
+		return s, s.refreshCmd()
+
 	case editorFinishedMsg:
 		if msg.err != nil {
 			s.app.status = errStyle.Render("editor: " + msg.err.Error())
@@ -138,6 +152,11 @@ func (s *listScreen) handleKey(key string) (screen, tea.Cmd) {
 			return s, nil
 		}
 		return s, s.app.editCmd(path)
+	case "m":
+		if len(rows) == 0 {
+			return s, nil
+		}
+		return s.routeMerge(rows[s.cursor])
 	case "n":
 		if s.offline() {
 			s.app.status = "offline — drafting a skill needs the server"
@@ -189,6 +208,26 @@ func (s *listScreen) routePublish(row Row) (screen, tea.Cmd) {
 		return s, nil
 	}
 	return s, s.app.push(newPublishScreen(s.app, row))
+}
+
+// routeMerge three-way merges the server's version into a conflicted file:
+// the only key that resolves a conflict without losing either side.
+func (s *listScreen) routeMerge(row Row) (screen, tea.Cmd) {
+	if row.Classification != state.Conflicted {
+		s.app.status = "merge applies to conflicted documents — this one is " + string(row.Classification)
+		return s, nil
+	}
+	if s.offline() {
+		s.app.status = "offline — merging needs the server's current version"
+		return s, nil
+	}
+	deps := s.app.deps
+	slug := row.Slug
+	s.app.status = "merging…"
+	return s, func() tea.Msg {
+		outcome, err := deps.MergeRemote(slug)
+		return mergedMsg{outcome: outcome, err: err}
+	}
 }
 
 func (s *listScreen) offline() bool {
@@ -260,6 +299,9 @@ func (s *listScreen) hints(row Row) string {
 	hints := []string{"enter " + enterVerb, "e edit", "n new skill", "s sync", "r refresh", "f push-facts", "q quit"}
 	if row.ProposalSlug != "" {
 		hints = append(hints[:1], append([]string{"p publish"}, hints[1:]...)...)
+	}
+	if row.Classification == state.Conflicted {
+		hints = append([]string{"m merge"}, hints...)
 	}
 	return strings.Join(hints, " · ")
 }

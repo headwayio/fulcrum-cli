@@ -13,6 +13,7 @@ import (
 
 	"github.com/headwayio/fulcrum-cli/internal/api"
 	"github.com/headwayio/fulcrum-cli/internal/config"
+	"github.com/headwayio/fulcrum-cli/internal/diffx"
 	"github.com/headwayio/fulcrum-cli/internal/scan"
 	"github.com/headwayio/fulcrum-cli/internal/state"
 	"github.com/headwayio/fulcrum-cli/internal/workspace"
@@ -38,6 +39,12 @@ type Row struct {
 	// proposal, with its id.
 	Outcome   string
 	OutcomeID int64
+}
+
+// MergeOutcome reports what a three-way merge produced.
+type MergeOutcome struct {
+	Filename  string
+	Conflicts int
 }
 
 // Snapshot is everything the list screen shows for one refresh.
@@ -87,6 +94,9 @@ type Deps interface {
 	// CreateSkillDraft mints a creator-only draft on the server and lands it
 	// in the workspace, tracked like any synced document.
 	CreateSkillDraft(name string) (*api.SkillDraft, error)
+	// MergeRemote three-way merges the server's current version into the
+	// working file for a conflicted document.
+	MergeRemote(slug string) (*MergeOutcome, error)
 	Publish(slug string, doc map[string]any, baseDigest, note string) (*api.ProposalReceipt, error)
 	ProposalByID(id int64) (*api.Proposal, error)
 
@@ -341,6 +351,45 @@ func (l *Live) CreateSkillDraft(name string) (*api.SkillDraft, error) {
 		return nil, err
 	}
 	return draft, nil
+}
+
+func (l *Live) MergeRemote(slug string) (*MergeOutcome, error) {
+	w, err := l.workspace()
+	if err != nil {
+		return nil, err
+	}
+	manifest, _, err := l.client().Manifest(context.Background(), "")
+	if err != nil {
+		return nil, err
+	}
+	var doc *api.ManifestDocument
+	for i := range manifest.Documents {
+		if manifest.Documents[i].Slug == slug {
+			doc = &manifest.Documents[i]
+		}
+	}
+	if doc == nil {
+		return nil, fmt.Errorf("%s is no longer in the manifest", slug)
+	}
+
+	base := w.Base(slug)
+	if base == nil {
+		return nil, fmt.Errorf("no pristine base for %s — sync once with this client, then merge", doc.Filename)
+	}
+	local, err := w.ReadLocal(slug)
+	if err != nil {
+		return nil, err
+	}
+	res, err := l.client().Document(context.Background(), slug, "")
+	if err != nil {
+		return nil, err
+	}
+
+	merged, conflicts := diffx.Merge3(base, local, res.Body)
+	if err := w.AdoptMerge(*doc, res.Body, merged); err != nil {
+		return nil, err
+	}
+	return &MergeOutcome{Filename: doc.Filename, Conflicts: conflicts}, nil
 }
 
 func (l *Live) Publish(slug string, doc map[string]any, baseDigest, note string) (*api.ProposalReceipt, error) {

@@ -1,0 +1,68 @@
+# Resolving a conflicted document: both sides moved, so merge combines them
+# against the copy from the last sync. Edits in different places merge
+# cleanly and publishing is truthful afterwards; edits to the same line get
+# conflict markers, and publishing refuses until they are gone.
+
+fulcrum sync
+
+# We append a paragraph; the server rewrites the opening line.
+cp local-append.md skills/skill-corpus-writing-specs.md
+srv edit skill-corpus-writing-specs 'Name the behavior, not the implementation.' 'Name the behavior. Server said so.'
+fulcrum -code 1 status
+grep 'CONFLICTED' last-stdout.txt
+
+fulcrum merge
+grep 'merged skill-corpus-writing-specs.md cleanly' last-stdout.txt
+
+# Both edits survive, and the doc is merely drifted against current now.
+grep 'Ours, appended at the end.' skills/skill-corpus-writing-specs.md
+grep 'Name the behavior. Server said so.' skills/skill-corpus-writing-specs.md
+fulcrum -code 1 status
+grep 'drifted' last-stdout.txt
+! grep 'CONFLICTED' last-stdout.txt
+
+# Publishing after a merge is based on the CURRENT version, not flagged stale.
+fulcrum publish --yes --note merged-cleanly
+grep 'Proposal #101 submitted' last-stdout.txt
+! grep 'flagged stale' last-stdout.txt
+
+# Now both sides rewrite the same line.
+fulcrum sync --force
+cp same-line.md skills/skill-corpus-writing-specs.md
+srv edit skill-corpus-writing-specs 'Name the behavior. Server said so.' 'Name the behavior. Server again.'
+
+fulcrum -code 1 merge
+grep 'conflict' last-stdout.txt
+grep '<<<<<<< your local edits' skills/skill-corpus-writing-specs.md
+grep '>>>>>>> the current version in Fulcrum' skills/skill-corpus-writing-specs.md
+# Both sides are preserved for the human to choose between.
+grep 'My words instead.' skills/skill-corpus-writing-specs.md
+grep 'Server again.' skills/skill-corpus-writing-specs.md
+
+# Publishing refuses to submit markers — no second proposal is created.
+fulcrum publish --yes --note still-conflicted
+grep 'unresolved conflict markers' last-stdout.txt
+srv count 1
+
+-- local-append.md --
+---
+name: corpus-writing-specs
+description: How this team writes request specs.
+---
+
+# corpus-writing-specs
+
+Name the behavior, not the implementation. One expectation of intent
+per example; shared setup in let blocks.
+
+Ours, appended at the end.
+-- same-line.md --
+---
+name: corpus-writing-specs
+description: How this team writes request specs.
+---
+
+# corpus-writing-specs
+
+Name the behavior. My words instead. One expectation of intent
+per example; shared setup in let blocks.

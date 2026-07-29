@@ -76,6 +76,18 @@ func (w *Workspace) SyncDocument(doc api.ManifestDocument, body []byte) error {
 	return w.SaveState()
 }
 
+// AdoptMerge records the server's current version as the new baseline while
+// leaving merged content in the working file. That is what makes a merge
+// honest downstream: the doc reclassifies from conflicted to drifted, and
+// the base digest publish sends is the version actually merged against, so
+// the proposal's based_on_current flag tells the truth.
+func (w *Workspace) AdoptMerge(doc api.ManifestDocument, remote, merged []byte) error {
+	if err := w.SyncDocument(doc, remote); err != nil {
+		return err
+	}
+	return writeAtomic(filepath.Join(w.Dir, doc.Filename), merged)
+}
+
 // Base returns the pristine bytes from the last sync, nil when absent (a
 // workspace last synced by the Ruby client has no bases yet).
 func (w *Workspace) Base(slug string) []byte {

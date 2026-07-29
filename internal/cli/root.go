@@ -24,7 +24,8 @@ func (a *App) Root() *cobra.Command {
 	root.SetErr(a.Stderr)
 
 	root.AddCommand(a.syncCmd(), a.statusCmd(), a.projectsCmd(), a.publishCmd(),
-		a.pushFactsCmd(), a.catCmd(), a.loginCmd(), a.versionCmd(), a.skillsCmd())
+		a.pushFactsCmd(), a.catCmd(), a.loginCmd(), a.versionCmd(), a.skillsCmd(),
+		a.mergeCmd())
 	return root
 }
 

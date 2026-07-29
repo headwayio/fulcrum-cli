@@ -87,3 +87,11 @@ type editorFinishedMsg struct {
 }
 
 func (m editorFinishedMsg) failure() error { return m.err }
+
+// draftCreatedMsg reports a freshly minted creator-only draft skill.
+type draftCreatedMsg struct {
+	draft *api.SkillDraft
+	err   error
+}
+
+func (m draftCreatedMsg) failure() error { return m.err }

@@ -1,0 +1,41 @@
+# Developer-initiated skills: `skills new` mints a creator-only draft on the
+# server (template + reserved slug + real id), the workspace tracks it like
+# any synced doc, and publish is what reveals it to the review inbox.
+
+fulcrum sync
+
+fulcrum skills new writing-migrations
+grep 'draft skill-writing-migrations.md created' last-stdout.txt
+grep 'only you see it until you publish' last-stdout.txt
+exists skills/skill-writing-migrations.md
+grep 'name: writing-migrations' skills/skill-writing-migrations.md
+
+# Tracked immediately: fresh template classifies synced.
+fulcrum status
+grep 'skill-writing-migrations.md' last-stdout.txt
+! grep 'unsynced' last-stdout.txt
+
+# Reserved names are refused with the server's message.
+fulcrum -code 2 skills new writing-migrations
+grep 'exists' last-stderr.txt
+
+# Edit → drifted → publish sends the content wrap; apply resolves it.
+cp edited-draft.md skills/skill-writing-migrations.md
+fulcrum -code 1 status
+grep 'drifted' last-stdout.txt
+
+fulcrum publish --yes --note first-version
+grep 'Proposal #101 submitted' last-stdout.txt
+srv apply 101
+fulcrum -code 1 status
+grep 'proposal #101 accepted' last-stdout.txt
+
+-- edited-draft.md --
+---
+name: writing-migrations
+description: How this team writes replay-safe migrations.
+---
+
+# writing-migrations
+
+Plain SQL, schema DSL, or migration-local models only.

@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/exp/teatest/v2"
 
 	"github.com/headwayio/fulcrum-cli/internal/api"
+	"github.com/headwayio/fulcrum-cli/internal/state"
 )
 
 // harness wraps a TestModel with a CUMULATIVE output buffer: teatest's
@@ -311,6 +312,52 @@ func TestEditorHandoffRefreshes(t *testing.T) {
 	teatest.WaitFor(t, h.tm.Output(), func([]byte) bool {
 		return deps.refreshes > before
 	}, teatest.WithDuration(3*time.Second))
+}
+
+// --- new-skill draft flow ---
+
+func TestDraftSkillFlow(t *testing.T) {
+	snapshot := allStatesSnapshot()
+	snapshot.SkillDrafts = true
+	deps := &fakeDeps{configured: true, serverURL: "http://srv", snapshot: snapshot}
+	h := newTestModel(t, deps)
+	waitContains(t, h, "synced.md")
+
+	h.Type("n")
+	waitContains(t, h, "New skill")
+	waitContains(t, h, "Only you see the draft until you publish")
+
+	// Bad names are refused client-side before any request.
+	h.Type("Bad Name")
+	h.Send(enter())
+	waitContains(t, h, "kebab-case")
+	if len(deps.drafted) != 0 {
+		t.Fatalf("bad name must not reach the server: %v", deps.drafted)
+	}
+
+	for range "Bad Name" {
+		h.Send(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	}
+	h.Type("writing-migrations")
+	h.Send(enter())
+
+	waitContains(t, h, "draft skill-writing-migrations.md created")
+	if len(deps.drafted) != 1 || deps.drafted[0] != "writing-migrations" {
+		t.Errorf("drafted = %v", deps.drafted)
+	}
+}
+
+func TestDraftRowIsBadged(t *testing.T) {
+	snapshot := allStatesSnapshot()
+	snapshot.Rows = append(snapshot.Rows, Row{
+		Slug: "skill-my-draft", Filename: "skill-my-draft.md", Format: "markdown",
+		ProposalSlug: "skill-my-draft", RemoteDigest: "dddddddddddd",
+		Classification: state.Synced, Draft: true,
+	})
+	deps := &fakeDeps{configured: true, serverURL: "http://srv", snapshot: snapshot}
+	h := newTestModel(t, deps)
+	waitContains(t, h, "skill-my-draft.md")
+	waitContains(t, h, "draft (only you)")
 }
 
 // --- mid-session 401 ---

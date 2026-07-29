@@ -112,6 +112,23 @@ type ManifestDocument struct {
 	// ProposalSlug is nil on documents that cannot be proposed (generated
 	// renderings) and on pre-contract servers, which omit the field.
 	ProposalSlug *string `json:"proposal_slug"`
+	// Draft marks a developer-initiated skill visible only to its creator
+	// until a publish proposal reveals it.
+	Draft bool `json:"draft"`
+}
+
+// SkillDraft is the POST /skills response: a freshly minted, creator-only
+// draft, including its template content so the client can write the file
+// without a second fetch.
+type SkillDraft struct {
+	Slug         string `json:"slug"`
+	Filename     string `json:"filename"`
+	Format       string `json:"format"`
+	Digest       string `json:"digest"`
+	Version      int    `json:"version"`
+	ProposalSlug string `json:"proposal_slug"`
+	Draft        bool   `json:"draft"`
+	Content      string `json:"content"`
 }
 
 // Proposal is one row of GET /proposals (and the body of GET /proposals/:id).
@@ -227,6 +244,16 @@ func (c *Client) SubmitProposal(ctx context.Context, slug string, document map[s
 		return nil, err
 	}
 	return receipt, nil
+}
+
+// CreateSkillDraft mints a developer-initiated draft skill on the server —
+// creator-only until published (capability: skill_drafts).
+func (c *Client) CreateSkillDraft(ctx context.Context, name string) (*SkillDraft, error) {
+	draft := &SkillDraft{}
+	if err := c.post(ctx, "/api/agent_context/skills", map[string]any{"name": name}, draft); err != nil {
+		return nil, err
+	}
+	return draft, nil
 }
 
 // PushArchitecture upserts a project's architecture profile.

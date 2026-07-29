@@ -19,6 +19,7 @@ type fixtureServer struct {
 
 	mu        sync.Mutex
 	proposals []map[string]any
+	drafts    []map[string]any
 	nextID    int64
 }
 
@@ -36,8 +37,62 @@ func newFixtureServer() *fixtureServer {
 	f := &fixtureServer{nextID: 101}
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/api/agent_context/skills", func(w http.ResponseWriter, r *http.Request) {
-		w.Write(corpusFile("manifest.json"))
+	mux.HandleFunc("GET /api/agent_context/skills", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if len(f.drafts) == 0 {
+			w.Write(corpusFile("manifest.json"))
+			return
+		}
+		// Session drafts append to the corpus manifest, like the server's
+		// creator-only rows.
+		var manifest map[string]any
+		json.Unmarshal(corpusFile("manifest.json"), &manifest)
+		docs := manifest["documents"].([]any)
+		for _, d := range f.drafts {
+			row := map[string]any{}
+			for k, v := range d {
+				if k != "content" {
+					row[k] = v
+				}
+			}
+			docs = append(docs, row)
+		}
+		manifest["documents"] = docs
+		json.NewEncoder(w).Encode(manifest)
+	})
+
+	mux.HandleFunc("POST /api/agent_context/skills", func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Name string `json:"name"`
+		}
+		json.NewDecoder(r.Body).Decode(&payload)
+		f.mu.Lock()
+		for _, d := range f.drafts {
+			if d["slug"] == "skill-"+payload.Name {
+				f.mu.Unlock()
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				json.NewEncoder(w).Encode(map[string]any{
+					"error": fmt.Sprintf("a skill named %q already exists", payload.Name),
+					"code":  "skill_exists",
+				})
+				return
+			}
+		}
+		f.mu.Unlock()
+		content := fmt.Sprintf("---\nname: %s\ndescription: One line saying when an agent should reach for this skill.\n---\n\n# %s\n\nTemplate body.\n",
+			payload.Name, payload.Name)
+		draft := map[string]any{
+			"slug": "skill-" + payload.Name, "filename": "skill-" + payload.Name + ".md",
+			"format": "markdown", "digest": fmt.Sprintf("draft-digest-%s", payload.Name),
+			"version": 1, "proposal_slug": "skill-" + payload.Name,
+			"draft": true, "content": content,
+		}
+		f.mu.Lock()
+		f.drafts = append(f.drafts, draft)
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(draft)
 	})
 	mux.HandleFunc("/api/agent_context/skills/", func(w http.ResponseWriter, r *http.Request) {
 		switch strings.TrimPrefix(r.URL.Path, "/api/agent_context/skills/") {
@@ -51,6 +106,17 @@ func newFixtureServer() *fixtureServer {
 			w.Header().Set("Content-Type", "text/markdown")
 			w.Write(corpusFile("documents", "skill-corpus-writing-specs.md"))
 		default:
+			slug := strings.TrimPrefix(r.URL.Path, "/api/agent_context/skills/")
+			f.mu.Lock()
+			for _, d := range f.drafts {
+				if d["slug"] == slug {
+					f.mu.Unlock()
+					w.Header().Set("Content-Type", "text/markdown")
+					w.Write([]byte(d["content"].(string)))
+					return
+				}
+			}
+			f.mu.Unlock()
 			w.WriteHeader(http.StatusNotFound)
 			w.Write(corpusFile("errors", "unknown_document.json"))
 		}

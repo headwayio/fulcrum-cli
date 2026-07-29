@@ -37,6 +37,8 @@ type fakeDeps struct {
 	opened    []string
 	syncLines []string
 	refreshes int
+	drafted   []string
+	draftErr  error
 }
 
 func (f *fakeDeps) Configured() (bool, error) { return f.configured, nil }
@@ -78,6 +80,18 @@ func (f *fakeDeps) LocalPath(slug string) string {
 func (f *fakeDeps) Editor() string { return "true" }
 
 func (f *fakeDeps) SyncAll(force bool) ([]string, error) { return f.syncLines, nil }
+
+func (f *fakeDeps) CreateSkillDraft(name string) (*api.SkillDraft, error) {
+	if f.draftErr != nil {
+		return nil, f.draftErr
+	}
+	f.drafted = append(f.drafted, name)
+	return &api.SkillDraft{
+		Slug: "skill-" + name, Filename: "skill-" + name + ".md", Format: "markdown",
+		Digest: "draft-digest", Version: 1, ProposalSlug: "skill-" + name, Draft: true,
+		Content: "---\nname: " + name + "\n---\n\nTemplate.\n",
+	}, nil
+}
 
 func (f *fakeDeps) Publish(slug string, doc map[string]any, baseDigest, note string) (*api.ProposalReceipt, error) {
 	if f.publishErr != nil {

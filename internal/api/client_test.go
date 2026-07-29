@@ -46,7 +46,7 @@ func TestCorpusManifestDecodes(t *testing.T) {
 	}
 	for _, capability := range []string{
 		"skills", "proposals", "proposals_index", "projects", "architecture",
-		"org_skills", "skill_proposals",
+		"org_skills", "skill_proposals", "skill_drafts",
 	} {
 		if !m.API.Has(capability) {
 			t.Errorf("missing capability %q", capability)

@@ -26,6 +26,8 @@ type Row struct {
 	ProposalSlug   string
 	RemoteDigest   string
 	Classification state.Classification
+	// Draft marks a skill only its creator can see — publish reveals it.
+	Draft bool
 	// BaseDigest is the remote digest recorded AT LAST SYNC — what publish
 	// sends as base_digest so based_on_current stays truthful.
 	BaseDigest string
@@ -46,8 +48,10 @@ type Snapshot struct {
 	NetErr    string
 	// SkillProposals: the server accepts markdown (org skill) proposals.
 	SkillProposals bool
-	Rows           []Row
-	Manifest       *api.Manifest
+	// SkillDrafts: the server mints developer-initiated draft skills.
+	SkillDrafts bool
+	Rows        []Row
+	Manifest    *api.Manifest
 }
 
 // Deps is the TUI's whole outside world.
@@ -80,6 +84,9 @@ type Deps interface {
 	// SyncAll pulls fresh docs, skipping local edits unless force; returns
 	// human summary lines.
 	SyncAll(force bool) ([]string, error)
+	// CreateSkillDraft mints a creator-only draft on the server and lands it
+	// in the workspace, tracked like any synced document.
+	CreateSkillDraft(name string) (*api.SkillDraft, error)
 	Publish(slug string, doc map[string]any, baseDigest, note string) (*api.ProposalReceipt, error)
 	ProposalByID(id int64) (*api.Proposal, error)
 
@@ -174,6 +181,7 @@ func (l *Live) Refresh() (*Snapshot, error) {
 		snapshot.Manifest = manifest
 		snapshot.OrgName = manifest.Organization.Name
 		snapshot.SkillProposals = manifest.API.Has("skill_proposals")
+		snapshot.SkillDrafts = manifest.API.Has("skill_drafts")
 		if manifest.User != nil {
 			snapshot.UserEmail = manifest.User.Email
 		}
@@ -191,6 +199,7 @@ func (l *Live) Refresh() (*Snapshot, error) {
 			Format:         row.Format,
 			ProposalSlug:   row.ProposalSlug,
 			RemoteDigest:   row.RemoteDigest,
+			Draft:          row.Draft,
 			Classification: row.Classification,
 		}
 		if recorded := w.State.Document(row.Slug); recorded != nil {
@@ -309,6 +318,29 @@ func (l *Live) SyncAll(force bool) ([]string, error) {
 		lines = append(lines, fmt.Sprintf("synced %s", doc.Filename))
 	}
 	return lines, nil
+}
+
+func (l *Live) CreateSkillDraft(name string) (*api.SkillDraft, error) {
+	draft, err := l.client().CreateSkillDraft(context.Background(), name)
+	if err != nil {
+		return nil, err
+	}
+	w, err := l.workspace()
+	if err != nil {
+		return nil, err
+	}
+	// Land the template in the workspace, tracked like a synced document —
+	// it classifies synced now, drifted the moment it's edited, and the
+	// creator-only manifest row keeps it on the list.
+	proposalSlug := draft.ProposalSlug
+	err = w.SyncDocument(api.ManifestDocument{
+		Slug: draft.Slug, Format: draft.Format, Digest: draft.Digest,
+		Filename: draft.Filename, ProposalSlug: &proposalSlug, Draft: true,
+	}, []byte(draft.Content))
+	if err != nil {
+		return nil, err
+	}
+	return draft, nil
 }
 
 func (l *Live) Publish(slug string, doc map[string]any, baseDigest, note string) (*api.ProposalReceipt, error) {

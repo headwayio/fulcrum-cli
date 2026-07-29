@@ -138,6 +138,16 @@ func (s *listScreen) handleKey(key string) (screen, tea.Cmd) {
 			return s, nil
 		}
 		return s, s.app.editCmd(path)
+	case "n":
+		if s.offline() {
+			s.app.status = "offline — drafting a skill needs the server"
+			return s, nil
+		}
+		if s.app.snapshot == nil || !s.app.snapshot.SkillDrafts {
+			s.app.status = "this server does not mint draft skills yet"
+			return s, nil
+		}
+		return s, s.app.push(newDraftScreen(s.app))
 	}
 	return s, nil
 }
@@ -227,6 +237,9 @@ func (s *listScreen) view() string {
 		if row.Outcome != "" {
 			label = outcomeBadge(row.Outcome, row.OutcomeID)
 		}
+		if row.Draft {
+			label += dimStyle.Render("  · draft (only you)")
+		}
 		b.WriteString(fmt.Sprintf("%s%s %-12s %s\n", marker, name, shortDigest(row.RemoteDigest), label))
 	}
 
@@ -244,7 +257,7 @@ func (s *listScreen) hints(row Row) string {
 		state.Missing:    "—",
 		state.Unsynced:   "—",
 	}[row.Classification]
-	hints := []string{"enter " + enterVerb, "e edit", "s sync", "r refresh", "f push-facts", "q quit"}
+	hints := []string{"enter " + enterVerb, "e edit", "n new skill", "s sync", "r refresh", "f push-facts", "q quit"}
 	if row.ProposalSlug != "" {
 		hints = append(hints[:1], append([]string{"p publish"}, hints[1:]...)...)
 	}

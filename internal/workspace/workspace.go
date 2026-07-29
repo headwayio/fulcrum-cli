@@ -45,6 +45,7 @@ type DocStatus struct {
 	Format         string
 	ProposalSlug   string
 	RemoteDigest   string
+	Draft          bool
 	Classification state.Classification
 }
 
@@ -115,6 +116,7 @@ func (w *Workspace) Reconcile(manifest *api.Manifest) ([]DocStatus, error) {
 				Format:         doc.Format,
 				ProposalSlug:   proposalSlug,
 				RemoteDigest:   doc.Digest,
+				Draft:          doc.Draft,
 				Classification: w.State.Classify(doc.Slug, local, doc.Digest),
 			})
 		}

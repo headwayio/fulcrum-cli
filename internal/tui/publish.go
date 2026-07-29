@@ -130,7 +130,16 @@ func (s *publishScreen) submit() (screen, tea.Cmd) {
 			// Markdown (org skills) publishes as the content wrap.
 			document = map[string]any{"content": string(local)}
 		}
-		receipt, err := deps.Publish(row.ProposalSlug, document, row.BaseDigest, note)
+		receipt, err := deps.Publish(PublishRequest{
+			Slug:         row.Slug,
+			ProposalSlug: row.ProposalSlug,
+			Document:     document,
+			BaseDigest:   row.BaseDigest,
+			Note:         note,
+			// The bytes actually submitted, not a re-read: an editor saving
+			// mid-flight would otherwise record a hash that was never sent.
+			LocalSHA: state.HexSHA256(local),
+		})
 		return publishedMsg{receipt: receipt, err: err}
 	}
 }

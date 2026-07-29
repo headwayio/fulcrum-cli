@@ -29,6 +29,7 @@ type fakeDeps struct {
 	publishReceipt *api.ProposalReceipt
 	publishErr     error
 	published      []string
+	publishedSHAs  []string
 
 	proposals   map[int64]*api.Proposal
 	projects    []api.Project
@@ -131,11 +132,13 @@ func (f *fakeDeps) CreateSkillDraft(name string) (*api.SkillDraft, error) {
 	}, nil
 }
 
-func (f *fakeDeps) Publish(slug string, doc map[string]any, baseDigest, note string) (*api.ProposalReceipt, error) {
+func (f *fakeDeps) Publish(req PublishRequest) (*api.ProposalReceipt, error) {
 	if f.publishErr != nil {
 		return nil, f.publishErr
 	}
-	f.published = append(f.published, fmt.Sprintf("%s base=%s note=%s", slug, baseDigest, note))
+	f.published = append(f.published,
+		fmt.Sprintf("%s base=%s note=%s", req.ProposalSlug, req.BaseDigest, req.Note))
+	f.publishedSHAs = append(f.publishedSHAs, req.LocalSHA)
 	return f.publishReceipt, nil
 }
 

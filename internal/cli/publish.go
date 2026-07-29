@@ -128,8 +128,7 @@ func (a *App) runPublish(yes bool, note string) error {
 		if err != nil {
 			return wrapAPIError(err)
 		}
-		w.State.RecordProposal(doc.Slug, receipt.ID, state.HexSHA256(local))
-		if err := w.SaveState(); err != nil {
+		if err := w.RecordProposal(doc.Slug, receipt.ID, state.HexSHA256(local)); err != nil {
 			return exitf(ExitError, "save state: %v", err)
 		}
 		submitted++

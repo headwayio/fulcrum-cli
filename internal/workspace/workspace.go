@@ -90,6 +90,15 @@ func (w *Workspace) SyncDocument(doc api.ManifestDocument, body []byte) error {
 	return w.SaveState()
 }
 
+// RecordProposal writes down a submitted proposal. Both front ends must do
+// this and it is easy to forget in one of them: a proposal the workspace
+// never recorded keeps offering "publish", and when it comes back applied
+// the returning content reads as a stranger's edit rather than your own.
+func (w *Workspace) RecordProposal(slug string, id int64, localSHA string) error {
+	w.State.RecordProposal(slug, id, localSHA)
+	return w.SaveState()
+}
+
 // BetaFilename is the variant's name beside its canonical document:
 // skill-writing-specs.md → skill-writing-specs.beta.md. Flat, like every
 // other workspace file, so the frozen Ruby client is unaffected and both

@@ -160,7 +160,7 @@ type Deps interface {
 	// DropBeta hands authority back to the canonical document, returning
 	// where the variant's text was kept.
 	DropBeta(slug string) (string, error)
-	Publish(slug string, doc map[string]any, baseDigest, note string) (*api.ProposalReceipt, error)
+	Publish(req PublishRequest) (*api.ProposalReceipt, error)
 	ProposalByID(id int64) (*api.Proposal, error)
 
 	Projects() ([]api.Project, error)
@@ -557,10 +557,31 @@ func (l *Live) DropBeta(slug string) (string, error) {
 	return w.DropBeta(slug)
 }
 
-func (l *Live) Publish(slug string, doc map[string]any, baseDigest, note string) (*api.ProposalReceipt, error) {
-	receipt, err := l.client().SubmitProposal(context.Background(), slug, doc, baseDigest, note)
+// PublishRequest is one proposal. Slug and ProposalSlug differ (the second
+// is what the server files the proposal against), and LocalSHA is the hash
+// of the exact bytes submitted — recorded so the row reads "awaiting
+// review" and, once resolved, "applied".
+type PublishRequest struct {
+	Slug         string
+	ProposalSlug string
+	Document     map[string]any
+	BaseDigest   string
+	Note         string
+	LocalSHA     string
+}
+
+func (l *Live) Publish(req PublishRequest) (*api.ProposalReceipt, error) {
+	w, err := l.workspace()
 	if err != nil {
 		return nil, err
+	}
+	receipt, err := l.client().SubmitProposal(
+		context.Background(), req.ProposalSlug, req.Document, req.BaseDigest, req.Note)
+	if err != nil {
+		return nil, err
+	}
+	if err := w.RecordProposal(req.Slug, receipt.ID, req.LocalSHA); err != nil {
+		return receipt, fmt.Errorf("proposal #%d submitted, but recording it locally failed: %w", receipt.ID, err)
 	}
 	return receipt, nil
 }

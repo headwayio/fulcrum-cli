@@ -11,9 +11,15 @@ var (
 	delWordStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Reverse(true)
 )
 
+// pairThreshold is how much two lines must have in common before one is
+// treated as a rewrite of the other. Highlighting unrelated lines against
+// each other is worse than not highlighting at all: it paints most of both
+// lines and buries the real edit.
+const pairThreshold = 0.5
+
 // ColorizeIntraline styles a unified diff like Colorize, and additionally
-// highlights the changed WORDS when a removed run pairs 1:1 with an added
-// run — the eye lands on the edit, not the line.
+// highlights the changed WORDS within each removed line and the added line
+// it became — the eye lands on the edit, not the line.
 func ColorizeIntraline(unified string) string {
 	if unified == "" {
 		return ""
@@ -30,20 +36,8 @@ func ColorizeIntraline(unified string) string {
 			out = append(out, hunkStyle.Render(line))
 		case strings.HasPrefix(line, "-"):
 			removed, added := collectRuns(lines, i)
-			if len(removed) == len(added) && len(added) > 0 {
-				for j := range removed {
-					delLine, addLine := wordDiffPair(removed[j][1:], added[j][1:])
-					out = append(out, delStyle.Render("-")+delLine)
-					removed[j] = ""          // consumed
-					added[j] = "+" + addLine // stash styled
-				}
-				for _, a := range added {
-					out = append(out, addStyle.Render("+")+a[1:])
-				}
-				i += len(removed)*2 - 1
-			} else {
-				out = append(out, delStyle.Render(line))
-			}
+			out = append(out, renderRun(removed, added)...)
+			i += len(removed) + len(added) - 1
 		case strings.HasPrefix(line, "+"):
 			out = append(out, addStyle.Render(line))
 		default:
@@ -51,6 +45,171 @@ func ColorizeIntraline(unified string) string {
 		}
 	}
 	return strings.Join(out, "\n") + "\n"
+}
+
+// renderRun emits one removed/added run in unified order — every '-' then
+// every '+' — with word highlighting on the lines that paired up and plain
+// colour on the ones that did not. Runs are routinely lopsided (one line
+// rewritten while two more are appended), so an equal-length rule gives up
+// on exactly the edits worth highlighting.
+func renderRun(removed, added []string) []string {
+	pairs := pairRuns(removed, added)
+	partnerOf := make(map[int]int, len(pairs))
+	for old, new := range pairs {
+		partnerOf[new] = old
+	}
+
+	out := make([]string, 0, len(removed)+len(added))
+	for i, line := range removed {
+		j, paired := pairs[i]
+		if !paired {
+			out = append(out, delStyle.Render(line))
+			continue
+		}
+		out = append(out, delStyle.Render("-")+highlight(line[1:], added[j][1:], delStyle, delWordStyle))
+	}
+	for j, line := range added {
+		i, paired := partnerOf[j]
+		if !paired {
+			out = append(out, addStyle.Render(line))
+			continue
+		}
+		out = append(out, addStyle.Render("+")+highlight(line[1:], removed[i][1:], addStyle, addWordStyle))
+	}
+	return out
+}
+
+// pairRuns matches each removed line to the added line it most likely
+// became, strongest match first so a good pair is never stolen by a weaker
+// one earlier in the run. Lines that clear no match stay unpaired.
+func pairRuns(removed, added []string) map[int]int {
+	type candidate struct {
+		old, new int
+		score    float64
+	}
+	var ranked []candidate
+	for i, oldLine := range removed {
+		for j, newLine := range added {
+			if score := relatedness(oldLine[1:], newLine[1:]); score >= pairThreshold {
+				ranked = append(ranked, candidate{i, j, score})
+			}
+		}
+	}
+	// Insertion sort, descending: runs are a handful of lines, and keeping
+	// it stable leaves equally-good matches in document order.
+	for i := 1; i < len(ranked); i++ {
+		for j := i; j > 0 && ranked[j].score > ranked[j-1].score; j-- {
+			ranked[j], ranked[j-1] = ranked[j-1], ranked[j]
+		}
+	}
+
+	pairs := make(map[int]int)
+	takenNew := make(map[int]bool)
+	for _, c := range ranked {
+		if _, used := pairs[c.old]; used || takenNew[c.new] {
+			continue
+		}
+		pairs[c.old] = c.new
+		takenNew[c.new] = true
+	}
+	return pairs
+}
+
+// relatedness scores two lines as candidates for the same line, rewritten.
+// Whole-word overlap alone is too coarse for short lines — "Be kind."
+// becoming "Be kind and specific." shares one whole word out of six — so a
+// long common prefix or suffix counts too: edits are localised, and
+// unrelated lines rarely start or end alike.
+func relatedness(oldLine, newLine string) float64 {
+	return max(similarity(oldLine, newLine), affinity(oldLine, newLine))
+}
+
+// affinity is how much of the shorter line survives at its two edges.
+func affinity(a, b string) float64 {
+	ra, rb := []rune(a), []rune(b)
+	shorter := min(len(ra), len(rb))
+	if shorter == 0 {
+		return 0
+	}
+	prefix := 0
+	for prefix < shorter && ra[prefix] == rb[prefix] {
+		prefix++
+	}
+	// Bounded by what the prefix left, so a line cannot count twice.
+	suffix := 0
+	for suffix < shorter-prefix && ra[len(ra)-1-suffix] == rb[len(rb)-1-suffix] {
+		suffix++
+	}
+	return float64(prefix+suffix) / float64(shorter)
+}
+
+// similarity is the share of words two lines agree on, in order. Whitespace
+// is ignored: lines whose only common ground is the spaces between their
+// words have nothing in common.
+func similarity(oldLine, newLine string) float64 {
+	a, b := words(oldLine), words(newLine)
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	keepA, _ := lcsKeep(a, b)
+	common := 0
+	for _, kept := range keepA {
+		if kept {
+			common++
+		}
+	}
+	return 2 * float64(common) / float64(len(a)+len(b))
+}
+
+// highlight renders line against its partner: the whole line carries its
+// add/remove colour, and only the differing words are reversed out.
+func highlight(line, partner string, base, changed lipgloss.Style) string {
+	tokens, partnerTokens := tokenize(line), tokenize(partner)
+	keep, _ := lcsKeep(tokens, partnerTokens)
+
+	changedAt := make([]bool, len(tokens))
+	for i := range tokens {
+		changedAt[i] = !keep[i]
+	}
+	// Whitespace is only part of the change when it sits INSIDE one: the
+	// gap between two rewritten words belongs to the rewrite, while the
+	// space after a single edited word is just a gap, and marking it smears
+	// a block into the untouched text. Neighbours are read from the
+	// original flags so a run of spaces cannot cascade.
+	original := append([]bool(nil), changedAt...)
+	for i, token := range tokens {
+		if strings.TrimSpace(token) != "" {
+			continue
+		}
+		changedAt[i] = i > 0 && i < len(tokens)-1 && original[i-1] && original[i+1]
+	}
+
+	// Coalesce neighbours that share a style before rendering: styling each
+	// token on its own is visually identical but emits an escape sequence
+	// per word, which bloats every frame and every golden.
+	var out strings.Builder
+	var run strings.Builder
+	runChanged := false
+	flush := func() {
+		if run.Len() == 0 {
+			return
+		}
+		if runChanged {
+			out.WriteString(changed.Render(run.String()))
+		} else {
+			out.WriteString(base.Render(run.String()))
+		}
+		run.Reset()
+	}
+	for i, token := range tokens {
+		if changedAt[i] != runChanged {
+			flush()
+			runChanged = changedAt[i]
+		}
+		run.WriteString(token)
+	}
+	flush()
+	return out.String()
 }
 
 // collectRuns gathers the contiguous '-' run starting at i and the '+' run
@@ -68,32 +227,8 @@ func collectRuns(lines []string, i int) (removed, added []string) {
 	return removed, added
 }
 
-// wordDiffPair renders old/new with changed words highlighted, via a
-// token-level LCS. Tokens keep their trailing spaces so joins reproduce the
-// original spacing exactly.
-func wordDiffPair(oldLine, newLine string) (string, string) {
-	oldTokens, newTokens := tokenize(oldLine), tokenize(newLine)
-	keepOld, keepNew := lcsKeep(oldTokens, newTokens)
-
-	var oldOut, newOut strings.Builder
-	for i, token := range oldTokens {
-		if keepOld[i] {
-			oldOut.WriteString(token)
-		} else {
-			oldOut.WriteString(delWordStyle.Render(token))
-		}
-	}
-	for i, token := range newTokens {
-		if keepNew[i] {
-			newOut.WriteString(token)
-		} else {
-			newOut.WriteString(addWordStyle.Render(token))
-		}
-	}
-	return delStyle.Render("") + oldOut.String(), newOut.String()
-}
-
-// tokenize splits into word+whitespace units.
+// tokenize splits into word+whitespace units. Tokens keep their spacing so
+// joins reproduce the original line exactly.
 func tokenize(s string) []string {
 	var tokens []string
 	var current strings.Builder
@@ -111,6 +246,18 @@ func tokenize(s string) []string {
 		tokens = append(tokens, current.String())
 	}
 	return tokens
+}
+
+// words is tokenize without the whitespace runs — what "how alike are these
+// two lines" has to be measured on.
+func words(s string) []string {
+	var out []string
+	for _, token := range tokenize(s) {
+		if strings.TrimSpace(token) != "" {
+			out = append(out, token)
+		}
+	}
+	return out
 }
 
 // lcsKeep marks the tokens on each side that belong to the longest common

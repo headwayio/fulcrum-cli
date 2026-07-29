@@ -105,3 +105,114 @@ func stripANSI(s string) string {
 	}
 	return b.String()
 }
+
+// highlighted reports the words reversed out on the first line of `styled`
+// whose plain text contains `needle`.
+func highlighted(t *testing.T, styled, needle string) []string {
+	t.Helper()
+	for _, line := range strings.Split(styled, "\n") {
+		if !strings.Contains(stripANSI(line), needle) {
+			continue
+		}
+		var marked []string
+		// Reverse video is the emphasis; "7" is its SGR parameter.
+		for _, chunk := range strings.Split(line, "\x1b[")[1:] {
+			code, text, ok := strings.Cut(chunk, "m")
+			if ok && strings.Contains(code, "7") && text != "" {
+				marked = append(marked, text)
+			}
+		}
+		return marked
+	}
+	t.Fatalf("no line containing %q in:\n%s", needle, stripANSI(styled))
+	return nil
+}
+
+// Runs are routinely lopsided — one line rewritten while more are appended.
+// Requiring equal counts gave up on exactly the edit worth highlighting.
+func TestWordHighlightSurvivesALopsidedRun(t *testing.T) {
+	old := "the steps to follow, and the traps to avoid.\n"
+	new := "the steps to follow, and the traps to super avoid.\n\nA new closing line\n"
+	styled := ColorizeIntraline(Unified("skill.md", []byte(old), []byte(new)))
+
+	if got := highlighted(t, styled, "super avoid"); len(got) != 1 || got[0] != "super" {
+		t.Errorf("marked %q, want just [super]", got)
+	}
+	// The appended lines pair with nothing, so nothing on them is marked.
+	if got := highlighted(t, styled, "A new closing line"); len(got) != 0 {
+		t.Errorf("an unrelated added line should carry no word marks, got %q", got)
+	}
+}
+
+// A rewrite pairs with its own line, not with whichever happens to sit at
+// the same index — and never with a line it has nothing in common with.
+func TestWordHighlightPairsByContentNotPosition(t *testing.T) {
+	old := "alpha beta gamma\ncompletely unrelated sentence here\n"
+	new := "something else entirely different\nalpha beta DELTA\n"
+	styled := ColorizeIntraline(Unified("d.md", []byte(old), []byte(new)))
+
+	// "alpha beta gamma" → "alpha beta DELTA" despite being second in the
+	// added run; the truly unrelated pair stays unmarked.
+	if got := highlighted(t, styled, "alpha beta DELTA"); len(got) != 1 || got[0] != "DELTA" {
+		t.Errorf("marked %q, want just [DELTA]", got)
+	}
+	if got := highlighted(t, styled, "something else entirely"); len(got) != 0 {
+		t.Errorf("unrelated lines must not be word-diffed against each other, got %q", got)
+	}
+}
+
+// Two lines sharing only their spaces have nothing in common: pairing them
+// paints almost every word and hides where the real edit is.
+func TestWordHighlightSkipsUnrelatedRewrites(t *testing.T) {
+	old := "one two three four\n"
+	new := "quite different words here\n"
+	styled := ColorizeIntraline(Unified("d.md", []byte(old), []byte(new)))
+
+	if got := highlighted(t, styled, "quite different"); len(got) != 0 {
+		t.Errorf("marked %q, want nothing — the lines are unrelated", got)
+	}
+	if sim := similarity("one two three four", "quite different words here"); sim >= pairThreshold {
+		t.Errorf("similarity %.2f should sit below the %.2f bar", sim, pairThreshold)
+	}
+}
+
+// Whitespace is never the edit: reversing it smears a block across the gap
+// between two words.
+func TestWordHighlightNeverMarksWhitespace(t *testing.T) {
+	styled := ColorizeIntraline(Unified("d.md",
+		[]byte("keep this word\n"), []byte("keep that word\n")))
+	for _, marked := range highlighted(t, styled, "keep that word") {
+		if strings.TrimSpace(marked) == "" {
+			t.Errorf("whitespace was marked as changed in %q", styled)
+		}
+	}
+}
+
+// The gap between two rewritten words belongs to the rewrite; the gap after
+// a single edited word does not. One phrase, one highlight — not a row of
+// boxes with untouched spaces between them.
+func TestWordHighlightKeepsARewrittenPhraseWhole(t *testing.T) {
+	styled := ColorizeIntraline(Unified("d.md",
+		[]byte("Be kind.\n"), []byte("Be kind and specific.\n")))
+
+	if got := highlighted(t, styled, "+Be kind and specific."); len(got) != 1 ||
+		got[0] != "kind and specific." {
+		t.Errorf("marked %q, want one whole phrase [kind and specific.]", got)
+	}
+	// A short line sharing one word out of six still pairs: the common
+	// prefix says it is the same line, edited.
+	if r := relatedness("Be kind.", "Be kind and specific."); r < pairThreshold {
+		t.Errorf("relatedness %.2f is below the %.2f bar; the rewrite would go unmarked",
+			r, pairThreshold)
+	}
+}
+
+func TestWordHighlightLeavesTheGapAfterAnEditedWord(t *testing.T) {
+	styled := ColorizeIntraline(Unified("d.md",
+		[]byte("Jon says hi\n"), []byte("Jon hi\n")))
+
+	got := highlighted(t, styled, "-Jon says hi")
+	if len(got) != 1 || got[0] != "says" {
+		t.Errorf("marked %q, want just [says] with its trailing space left alone", got)
+	}
+}

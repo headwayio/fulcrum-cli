@@ -155,6 +155,30 @@ func (s *SyncState) RecordSync(slug, filename, remoteDigest string, body []byte)
 	}
 }
 
+// BaseBehind reports bookkeeping that has fallen behind the server: the
+// recorded base predates what is being served. True even when the file
+// already holds the right bytes (your own proposal, applied), because every
+// later comparison is made against that base — so it is worth a re-sync.
+func (s *SyncState) BaseBehind(slug, remoteDigest string) bool {
+	recorded := s.Documents[slug]
+	return recorded != nil && recorded.RemoteDigest != remoteDigest
+}
+
+// ForgetResolvedProposals drops applied/rejected records for a document the
+// workspace has now caught up with. An outcome is news, and news expires:
+// left in place it matches the same local bytes forever, so the row would
+// keep announcing an approval from weeks ago.
+func (s *SyncState) ForgetResolvedProposals(slug string) {
+	kept := s.Proposals[:0]
+	for _, p := range s.Proposals {
+		if p.Slug == slug && p.Resolved() {
+			continue
+		}
+		kept = append(kept, p)
+	}
+	s.Proposals = kept
+}
+
 // RecordProposal mirrors Ruby record_proposal.
 func (s *SyncState) RecordProposal(slug string, id int64, fileSHA256 string) {
 	s.Proposals = append(s.Proposals, &Proposal{Slug: slug, ID: id, FileSHA256: fileSHA256})
@@ -246,6 +270,12 @@ func (s *SyncState) Classify(slug string, localBody []byte, remoteDigest string)
 	remoteMoved := remoteDigest != recorded.RemoteDigest
 
 	switch {
+	// Both sides hold the same bytes — normally your own proposal coming
+	// back applied. Nothing can be in conflict with itself, whatever the
+	// last-sync bookkeeping still says. (A document whose digest is not its
+	// body's SHA, like the rendered rubric, simply never matches here.)
+	case localSHA == remoteDigest:
+		return Synced
 	case localChanged && s.proposed(slug, localSHA):
 		return Proposed
 	case localChanged && remoteMoved:

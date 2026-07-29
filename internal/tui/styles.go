@@ -49,6 +49,8 @@ func draftBadge(c state.Classification) string {
 		return errStyle.Render("x draft · the file is gone")
 	case state.Synced:
 		return dimStyle.Render("* draft (only you) · still the template")
+	case state.Proposed:
+		return accentStyle.Render("* draft (only you) · awaiting review")
 	default:
 		return accentStyle.Render("* draft (only you) · ready to publish")
 	}

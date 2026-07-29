@@ -399,7 +399,12 @@ func (l *Live) SyncAll(force bool) (SyncSummary, error) {
 			continue
 		}
 		if !force && c == state.Synced {
-			// Digest identity: nothing moved, so there is nothing to fetch.
+			// Digest identity: nothing moved, so there is nothing to fetch —
+			// but a document that converged (your applied proposal) still
+			// needs its base caught up.
+			if _, err := w.RecordConverged(doc, local); err != nil {
+				return sum, err
+			}
 			sum.Fresh++
 			continue
 		}

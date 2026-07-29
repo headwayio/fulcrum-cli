@@ -143,6 +143,11 @@ func (a *App) runStatus(asJSON, withDiff bool) error {
 			entry.Beta = row.Beta.Filename
 			entry.CanonicalMoved = row.Beta.CanonicalMoved
 			stale = stale || row.Beta.CanonicalMoved
+		case row.Classification == state.Synced && w.State.BaseBehind(row.Slug, row.RemoteDigest):
+			// Converged — usually your own proposal, applied. The file is
+			// right, the record is not, and until a sync catches it up the
+			// next remote change would look like a conflict.
+			stale = true
 		case row.Classification != state.Synced && row.Classification != state.Proposed:
 			stale = true
 		}
@@ -225,7 +230,8 @@ func (a *App) rowLabel(w *workspace.Workspace, row workspace.DocStatus) string {
 		}
 		return "beta " + row.Beta.Filename + " (yours; based on the current version)"
 	}
-	if row.Classification == state.Drifted || row.Classification == state.Conflicted {
+	behind := w.State.BaseBehind(row.Slug, row.RemoteDigest)
+	if row.Classification == state.Drifted || row.Classification == state.Conflicted || behind {
 		if local, err := w.ReadLocal(row.Slug); err == nil && local != nil {
 			if p := w.State.ResolvedProposalFor(row.Slug, state.HexSHA256(local)); p != nil {
 				if p.Status == "applied" {
@@ -234,6 +240,12 @@ func (a *App) rowLabel(w *workspace.Workspace, row workspace.DocStatus) string {
 				return "rejected (proposal #" + fmt.Sprint(p.ID) + " declined — local edits remain)"
 			}
 		}
+	}
+	// Converged without a local record of how — published from another
+	// machine, or applied straight from the browser. Saying "synced" while
+	// exiting stale would be a riddle.
+	if behind && row.Classification == state.Synced {
+		return "matches the current version — re-sync to record it"
 	}
 	return statusLabels[row.Classification]
 }

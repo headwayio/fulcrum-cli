@@ -41,6 +41,22 @@ srv apply 101
 fulcrum -code 1 status
 grep 'proposal #101 accepted' last-stdout.txt
 
+# Approving a draft publishes it, so the server now serves exactly the bytes
+# already on disk. That is convergence, not a conflict — nothing here needs
+# merging, and it is not the file that is behind but the record of it.
+! grep '[Cc]onflict' last-stdout.txt
+
+# A plain sync catches the record up. Not --force: overwriting is a licence
+# this case never needs, and asking for it would teach the wrong reflex.
+fulcrum sync
+grep 'your proposal is now the current version' last-stdout.txt
+cmp skills/skill-writing-migrations.md edited-draft.md
+
+# Quiet afterwards: fresh, and the approval notice does not repeat forever.
+fulcrum status
+grep 'synced' last-stdout.txt
+! grep 'accepted' last-stdout.txt
+
 -- edited-draft.md --
 ---
 name: writing-migrations

@@ -87,6 +87,7 @@ func (w *Workspace) SyncDocument(doc api.ManifestDocument, body []byte) error {
 		return err
 	}
 	w.State.RecordSync(doc.Slug, doc.Filename, doc.Digest, body)
+	w.State.ForgetResolvedProposals(doc.Slug)
 	return w.SaveState()
 }
 
@@ -97,6 +98,23 @@ func (w *Workspace) SyncDocument(doc api.ManifestDocument, body []byte) error {
 func (w *Workspace) RecordProposal(slug string, id int64, localSHA string) error {
 	w.State.RecordProposal(slug, id, localSHA)
 	return w.SaveState()
+}
+
+// RecordConverged catches the base copy up to a document whose local bytes
+// already match the server's — your proposal came back applied, so there is
+// nothing to fetch, but the recorded base is a version behind and every
+// later comparison would be made against it. Reports whether it did
+// anything. The file itself is never touched.
+func (w *Workspace) RecordConverged(doc api.ManifestDocument, local []byte) (bool, error) {
+	if recorded := w.State.Documents[doc.Slug]; recorded != nil && recorded.RemoteDigest == doc.Digest {
+		return false, nil
+	}
+	if err := writeAtomic(filepath.Join(w.Dir, BaseDir, doc.Filename), local); err != nil {
+		return false, err
+	}
+	w.State.RecordSync(doc.Slug, doc.Filename, doc.Digest, local)
+	w.State.ForgetResolvedProposals(doc.Slug)
+	return true, w.SaveState()
 }
 
 // BetaFilename is the variant's name beside its canonical document:

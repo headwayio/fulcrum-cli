@@ -66,8 +66,18 @@ func (a *App) runSync(force bool) error {
 		}
 
 		if classification == state.Synced && !force {
-			// Digest identity: nothing moved, nothing to fetch.
-			fmt.Fprintf(a.Stdout, "fresh %s\n", doc.Filename)
+			// Digest identity: nothing moved, nothing to fetch — but a
+			// document that converged (your applied proposal) still needs
+			// its base caught up, or later comparisons use a stale one.
+			caught, err := w.RecordConverged(doc, local)
+			if err != nil {
+				return exitf(ExitError, "save state: %v", err)
+			}
+			if caught {
+				fmt.Fprintf(a.Stdout, "fresh %s (your proposal is now the current version)\n", doc.Filename)
+			} else {
+				fmt.Fprintf(a.Stdout, "fresh %s\n", doc.Filename)
+			}
 			continue
 		}
 		if hasLocalEdits(classification) && !force {

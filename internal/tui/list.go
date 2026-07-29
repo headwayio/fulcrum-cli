@@ -343,7 +343,10 @@ func (s *listScreen) view() string {
 		if row.Draft || row.Beta != nil {
 			continue
 		}
-		if row.Classification != state.Synced && row.Classification != state.Proposed {
+		// An outcome still to be absorbed counts: the file is right, but the
+		// record behind it is a version old until the next sync.
+		if row.Outcome != "" ||
+			(row.Classification != state.Synced && row.Classification != state.Proposed) {
 			stale++
 		}
 	}

@@ -200,3 +200,62 @@ func TestLoadMissingFile(t *testing.T) {
 		t.Errorf("empty state classify = %q, want unsynced", got)
 	}
 }
+
+// Your own proposal, applied: the server now serves exactly the bytes on
+// disk. Nothing can be in conflict with itself, however far behind the
+// last-sync record has fallen.
+func TestConvergedBytesAreNotAConflict(t *testing.T) {
+	s := New()
+	s.RecordSync("x", "x.md", "d1", []byte("original"))
+
+	// Published, then approved upstream: remote moved to the local bytes.
+	mine := []byte("my version")
+	remote := HexSHA256(mine)
+	if got := s.Classify("x", mine, remote); got != Synced {
+		t.Errorf("converged = %q, want synced", got)
+	}
+	// The record is still a version behind, which a sync must catch up:
+	// until it does, the next remote change compares against the old base.
+	if !s.BaseBehind("x", remote) {
+		t.Error("BaseBehind should hold until a sync records the new digest")
+	}
+	s.RecordSync("x", "x.md", remote, mine)
+	if s.BaseBehind("x", remote) {
+		t.Error("BaseBehind should clear once the sync is recorded")
+	}
+
+	// A digest that is not its body's SHA (the rendered rubric) never
+	// collides with this rule.
+	s.RecordSync("r", "r.md", "canonical-digest", []byte("rendered"))
+	if got := s.Classify("r", []byte("rendered"), "canonical-digest"); got != Synced {
+		t.Errorf("rubric with an unrelated digest = %q, want synced by record", got)
+	}
+	if got := s.Classify("r", []byte("edited"), "canonical-digest"); got != Drifted {
+		t.Errorf("edited rubric = %q, want drifted", got)
+	}
+}
+
+// An outcome is news, and news expires. Left in place it matches the same
+// local bytes forever, so the row would keep announcing an old approval.
+func TestForgetResolvedProposalsClearsOnlyTheSettledOnes(t *testing.T) {
+	s := New()
+	mine := HexSHA256([]byte("mine"))
+	s.RecordProposal("x", 1, mine)
+	s.RecordProposal("x", 2, mine)
+	s.RecordProposal("y", 3, mine)
+	s.AnnotateProposal(1, "applied")
+	s.AnnotateProposal(3, "applied")
+
+	s.ForgetResolvedProposals("x")
+
+	if s.ResolvedProposalFor("x", mine) != nil {
+		t.Error("the applied proposal for x should be forgotten")
+	}
+	if len(s.Proposals) != 2 {
+		t.Fatalf("kept %d proposals, want 2 (x's pending one and y's)", len(s.Proposals))
+	}
+	if s.Proposals[0].ID != 2 || s.Proposals[1].ID != 3 {
+		t.Errorf("kept %v, want the pending #2 and another document's #3",
+			[]int64{s.Proposals[0].ID, s.Proposals[1].ID})
+	}
+}

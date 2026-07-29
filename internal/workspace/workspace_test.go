@@ -163,3 +163,49 @@ func TestAtomicWriteLeavesNoTempFiles(t *testing.T) {
 		}
 	}
 }
+
+// Publish → approve leaves the working file already correct but the base
+// copy a version behind. Catching it up is a metadata job: the file must
+// not be touched, and the settled outcome stops being news.
+func TestRecordConvergedCatchesTheBaseUpWithoutRewritingTheFile(t *testing.T) {
+	w, manifest := syncedWorkspace(t)
+	doc := manifest.Documents[0]
+
+	mine := []byte("# mine\n\nWhat I proposed.\n")
+	path := filepath.Join(w.Dir, doc.Filename)
+	if err := os.WriteFile(path, mine, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.State.RecordProposal(doc.Slug, 42, state.HexSHA256(mine))
+	w.State.AnnotateProposal(42, "applied")
+
+	// The server now serves those exact bytes.
+	applied := doc
+	applied.Digest = state.HexSHA256(mine)
+
+	caught, err := w.RecordConverged(applied, mine)
+	if err != nil || !caught {
+		t.Fatalf("RecordConverged = %v, %v; want true, nil", caught, err)
+	}
+	if body, _ := os.ReadFile(path); !bytes.Equal(body, mine) {
+		t.Error("the working file was rewritten; only the record should move")
+	}
+	if base := w.Base(doc.Slug); !bytes.Equal(base, mine) {
+		t.Error("the base copy should now hold the converged bytes")
+	}
+	if w.State.ResolvedProposalFor(doc.Slug, state.HexSHA256(mine)) != nil {
+		t.Error("a settled outcome should not keep announcing itself after the catch-up")
+	}
+
+	// Persisted, and idempotent: a second pass has nothing left to do.
+	reloaded, err := state.Load(w.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.BaseBehind(doc.Slug, applied.Digest) {
+		t.Error("the catch-up did not reach disk")
+	}
+	if again, err := w.RecordConverged(applied, mine); err != nil || again {
+		t.Errorf("second RecordConverged = %v, %v; want false, nil", again, err)
+	}
+}

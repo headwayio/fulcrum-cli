@@ -56,6 +56,14 @@ fulcrum publish --yes --note my-experiment-worked
 grep 'Proposal #101 submitted' last-stdout.txt
 srv count 1
 
+# A merge that leaves markers is the loudest thing on the row.
+cp conflicted.md skills/skill-corpus-writing-specs.beta.md
+fulcrum -code 1 status
+grep 'UNRESOLVED merge markers' last-stdout.txt
+fulcrum publish --yes --note nope
+grep 'unresolved conflict markers' last-stdout.txt
+cp mine.md skills/skill-corpus-writing-specs.beta.md
+
 # Dropping hands authority back, keeping my text.
 fulcrum skills beta skill-corpus-writing-specs --drop
 grep 'your text is kept at' last-stdout.txt
@@ -64,6 +72,19 @@ exists skills/.fulcrum/discarded/skill-corpus-writing-specs.beta.md
 fulcrum status
 ! grep 'beta' last-stdout.txt
 
+-- conflicted.md --
+---
+name: corpus-writing-specs
+description: How this team writes request specs.
+---
+
+# corpus-writing-specs
+
+<<<<<<< your local edits
+Mine.
+=======
+Theirs.
+>>>>>>> the current version in Fulcrum
 -- mine.md --
 ---
 name: corpus-writing-specs

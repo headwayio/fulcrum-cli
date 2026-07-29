@@ -55,6 +55,18 @@ type statusRow struct {
 	// is; CanonicalMoved says the team has advanced past it.
 	Beta           string `json:"beta,omitempty"`
 	CanonicalMoved bool   `json:"canonical_moved,omitempty"`
+	// UnresolvedConflict: a merge left markers in the file.
+	UnresolvedConflict bool `json:"unresolved_conflict,omitempty"`
+}
+
+// unresolvedMarkers reports whether the version in play — the local variant
+// when there is one — still carries merge markers.
+func unresolvedMarkers(w *workspace.Workspace, row workspace.DocStatus) bool {
+	if row.Beta != nil {
+		return diffx.HasConflictMarkers(w.ReadBeta(row.Slug))
+	}
+	content, err := w.ReadLocal(row.Slug)
+	return err == nil && content != nil && diffx.HasConflictMarkers(content)
 }
 
 type statusReport struct {
@@ -114,6 +126,13 @@ func (a *App) runStatus(asJSON, withDiff bool) error {
 			entry.CanonicalMoved = row.Beta.CanonicalMoved
 			stale = stale || row.Beta.CanonicalMoved
 		case row.Classification != state.Synced && row.Classification != state.Proposed:
+			stale = true
+		}
+		// Half-finished merges are the loudest thing on the row: nothing can
+		// be published until they are resolved.
+		if unresolvedMarkers(w, row) {
+			entry.UnresolvedConflict = true
+			entry.Label = "UNRESOLVED merge markers — edit the file, then publish"
 			stale = true
 		}
 		report.Documents = append(report.Documents, entry)

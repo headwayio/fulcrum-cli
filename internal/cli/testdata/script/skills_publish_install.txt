@@ -9,7 +9,7 @@ fulcrum skills install $WORK/proj
 grep 'installed corpus-writing-specs' last-stdout.txt
 exists proj/.claude/skills/corpus-writing-specs/SKILL.md
 cmp proj/.claude/skills/corpus-writing-specs/SKILL.md skills/skill-corpus-writing-specs.md
-grep 'corpus-writing-specs' proj/.claude/skills/.fulcrum-installed.json
+grep 'corpus-writing-specs' proj/.fulcrum/.fulcrum-installed.json
 
 # Idempotent: re-running converges, no drift, no error.
 fulcrum skills install $WORK/proj

@@ -1,0 +1,46 @@
+# Throwing away local edits: revert takes the server's version, keeping a
+# copy of what was discarded — the one destructive verb, made recoverable.
+
+fulcrum sync
+cp mine.md skills/skill-corpus-writing-specs.md
+fulcrum -code 1 status
+grep 'drifted' last-stdout.txt
+
+# Declining changes nothing.
+fulcrum -in decline.txt revert skill-corpus-writing-specs
+grep 'Nothing to revert' last-stdout.txt
+cmp skills/skill-corpus-writing-specs.md mine.md
+
+# Confirming restores the server's bytes and keeps mine aside.
+fulcrum -in accept.txt revert skill-corpus-writing-specs
+grep 'reverted skill-corpus-writing-specs.md' last-stdout.txt
+grep 'your version is kept at' last-stdout.txt
+cmp skills/skill-corpus-writing-specs.md $CORPUS/documents/skill-corpus-writing-specs.md
+cmp skills/.fulcrum/discarded/skill-corpus-writing-specs.md mine.md
+fulcrum status
+! grep 'drifted' last-stdout.txt
+
+# It also rescues a deleted file, and --yes skips the prompt.
+rm skills/skill-corpus-writing-specs.md
+fulcrum -code 1 status
+grep 'missing' last-stdout.txt
+fulcrum revert skill-corpus-writing-specs --yes
+cmp skills/skill-corpus-writing-specs.md $CORPUS/documents/skill-corpus-writing-specs.md
+
+# A name that is not a document says so rather than silently doing nothing.
+fulcrum -code 2 revert not-a-document --yes
+grep 'no document named' last-stderr.txt
+
+-- mine.md --
+---
+name: corpus-writing-specs
+description: How this team writes request specs.
+---
+
+# corpus-writing-specs
+
+Mine, and I have changed my mind about it.
+-- decline.txt --
+n
+-- accept.txt --
+y

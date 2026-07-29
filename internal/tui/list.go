@@ -15,6 +15,9 @@ type listScreen struct {
 	app     *App
 	cursor  int
 	loading bool
+	// discarding names the row awaiting a y/n answer. Throwing away edits is
+	// the one destructive verb here, so it never happens on one keypress.
+	discarding *Row
 }
 
 func newListScreen(a *App) *listScreen {
@@ -86,6 +89,18 @@ func (s *listScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		return s, s.refreshCmd()
 
+	case discardedMsg:
+		if msg.err != nil {
+			s.app.status = errStyle.Render(errorLine(msg.err))
+			return s, nil
+		}
+		if msg.backup != "" {
+			s.app.status = okStyle.Render(msg.filename + " reverted — your version kept at " + msg.backup)
+		} else {
+			s.app.status = okStyle.Render(msg.filename + " restored from the server")
+		}
+		return s, s.refreshCmd()
+
 	case editorFinishedMsg:
 		if msg.err != nil {
 			s.app.status = errStyle.Render("editor: " + msg.err.Error())
@@ -101,6 +116,23 @@ func (s *listScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 func (s *listScreen) handleKey(key string) (screen, tea.Cmd) {
 	rows := s.rows()
+
+	if pending := s.discarding; pending != nil {
+		s.discarding = nil
+		if key != "y" {
+			s.app.status = "kept your edits"
+			return s, nil
+		}
+		deps := s.app.deps
+		slug := pending.Slug
+		filename := pending.Filename
+		s.app.status = "discarding…"
+		return s, func() tea.Msg {
+			backup, err := deps.DiscardLocal(slug)
+			return discardedMsg{filename: filename, backup: backup, err: err}
+		}
+	}
+
 	switch key {
 	case "q":
 		s.app.quitting = true
@@ -157,6 +189,22 @@ func (s *listScreen) handleKey(key string) (screen, tea.Cmd) {
 			return s, nil
 		}
 		return s.routeMerge(rows[s.cursor])
+	case "x":
+		if len(rows) == 0 {
+			return s, nil
+		}
+		row := rows[s.cursor]
+		if !hasLocalEdits(row.Classification) {
+			s.app.status = "nothing local to discard on this document"
+			return s, nil
+		}
+		if s.offline() {
+			s.app.status = "offline — taking the server's version needs the server"
+			return s, nil
+		}
+		s.discarding = &row
+		s.app.status = warnStyle.Render("discard your edits to " + row.Filename + "? y / any other key")
+		return s, nil
 	case "n":
 		if s.offline() {
 			s.app.status = "offline — drafting a skill needs the server"
@@ -208,6 +256,12 @@ func (s *listScreen) routePublish(row Row) (screen, tea.Cmd) {
 		return s, nil
 	}
 	return s, s.app.push(newPublishScreen(s.app, row))
+}
+
+// hasLocalEdits: the states where the working file carries work the server
+// has not seen, and so the states a discard would destroy.
+func hasLocalEdits(c state.Classification) bool {
+	return c == state.Drifted || c == state.Conflicted || c == state.Proposed
 }
 
 // routeMerge three-way merges the server's version into a conflicted file:
@@ -299,6 +353,9 @@ func (s *listScreen) hints(row Row) string {
 	hints := []string{"enter " + enterVerb, "e edit", "n new skill", "s sync", "r refresh", "f push-facts", "q quit"}
 	if row.ProposalSlug != "" {
 		hints = append(hints[:1], append([]string{"p publish"}, hints[1:]...)...)
+	}
+	if hasLocalEdits(row.Classification) {
+		hints = append([]string{"x discard mine"}, hints...)
 	}
 	if row.Classification == state.Conflicted {
 		hints = append([]string{"m merge"}, hints...)

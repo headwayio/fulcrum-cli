@@ -97,6 +97,9 @@ type Deps interface {
 	// MergeRemote three-way merges the server's current version into the
 	// working file for a conflicted document.
 	MergeRemote(slug string) (*MergeOutcome, error)
+	// DiscardLocal throws away local edits and takes the server's version,
+	// returning where the discarded copy was kept.
+	DiscardLocal(slug string) (string, error)
 	Publish(slug string, doc map[string]any, baseDigest, note string) (*api.ProposalReceipt, error)
 	ProposalByID(id int64) (*api.Proposal, error)
 
@@ -390,6 +393,32 @@ func (l *Live) MergeRemote(slug string) (*MergeOutcome, error) {
 		return nil, err
 	}
 	return &MergeOutcome{Filename: doc.Filename, Conflicts: conflicts}, nil
+}
+
+func (l *Live) DiscardLocal(slug string) (string, error) {
+	w, err := l.workspace()
+	if err != nil {
+		return "", err
+	}
+	manifest, _, err := l.client().Manifest(context.Background(), "")
+	if err != nil {
+		return "", err
+	}
+	for _, doc := range manifest.Documents {
+		if doc.Slug != slug {
+			continue
+		}
+		backup, backupErr := w.BackupLocal(slug)
+		if backupErr != nil {
+			return "", backupErr
+		}
+		res, docErr := l.client().Document(context.Background(), slug, "")
+		if docErr != nil {
+			return "", docErr
+		}
+		return backup, w.SyncDocument(doc, res.Body)
+	}
+	return "", fmt.Errorf("%s is no longer in the manifest", slug)
 }
 
 func (l *Live) Publish(slug string, doc map[string]any, baseDigest, note string) (*api.ProposalReceipt, error) {

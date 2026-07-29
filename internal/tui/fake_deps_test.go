@@ -43,6 +43,7 @@ type fakeDeps struct {
 	merged         []string
 	mergeConflicts int
 	mergeErr       error
+	discarded      []string
 }
 
 func (f *fakeDeps) Configured() (bool, error) { return f.configured, nil }
@@ -91,6 +92,11 @@ func (f *fakeDeps) MergeRemote(slug string) (*MergeOutcome, error) {
 	}
 	f.merged = append(f.merged, slug)
 	return &MergeOutcome{Filename: slug + ".md", Conflicts: f.mergeConflicts}, nil
+}
+
+func (f *fakeDeps) DiscardLocal(slug string) (string, error) {
+	f.discarded = append(f.discarded, slug)
+	return "/fake/workspace/.fulcrum/discarded/" + slug + ".md", nil
 }
 
 func (f *fakeDeps) CreateSkillDraft(name string) (*api.SkillDraft, error) {

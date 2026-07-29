@@ -1,0 +1,49 @@
+# Per-project harness formats: Claude Code reads a directory of SKILL.md
+# files, Codex and the other AGENTS.md readers read one file. Install writes
+# whichever the project already uses, and never touches the rest of AGENTS.md.
+
+fulcrum sync
+
+# A project using neither convention gets the Claude layout by default.
+fulcrum skills install $WORK/fresh
+exists fresh/.claude/skills/corpus-writing-specs/SKILL.md
+! exists fresh/AGENTS.md
+grep '"targets"' fresh/.fulcrum/.fulcrum-installed.json
+
+# A project with an AGENTS.md gets its skills there instead — detected, not
+# configured — with the surrounding file left alone.
+mkdir codexproj
+cp house-rules.md codexproj/AGENTS.md
+fulcrum skills install $WORK/codexproj
+! exists codexproj/.claude/skills/corpus-writing-specs/SKILL.md
+grep '# House rules' codexproj/AGENTS.md
+grep 'Keep this paragraph.' codexproj/AGENTS.md
+grep 'BEGIN fulcrum skills' codexproj/AGENTS.md
+grep '### corpus-writing-specs' codexproj/AGENTS.md
+grep 'Name the behavior, not the implementation.' codexproj/AGENTS.md
+
+# Re-running replaces the block rather than stacking copies, and the
+# project's own text still survives.
+fulcrum skills install $WORK/codexproj
+grep -count=1 'BEGIN fulcrum skills' codexproj/AGENTS.md
+grep -count=1 '### corpus-writing-specs' codexproj/AGENTS.md
+grep 'Keep this paragraph.' codexproj/AGENTS.md
+
+# A project that uses both gets both.
+mkdir bothproj
+cp house-rules.md bothproj/AGENTS.md
+mkdir bothproj/.claude
+fulcrum skills install $WORK/bothproj
+exists bothproj/.claude/skills/corpus-writing-specs/SKILL.md
+grep 'BEGIN fulcrum skills' bothproj/AGENTS.md
+
+# An explicit target overrides detection; a bogus one is refused.
+fulcrum skills install $WORK/fresh --target agents
+exists fresh/AGENTS.md
+fulcrum -code 2 skills install $WORK/fresh --target sublime
+grep 'unknown --target' last-stderr.txt
+
+-- house-rules.md --
+# House rules
+
+Keep this paragraph.

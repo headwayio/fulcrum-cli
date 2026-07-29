@@ -97,6 +97,16 @@ type mergedMsg struct {
 
 func (m mergedMsg) failure() error { return m.err }
 
+// discardedMsg reports local edits thrown away in favour of the server's
+// version, with where the discarded copy was kept.
+type discardedMsg struct {
+	filename string
+	backup   string
+	err      error
+}
+
+func (m discardedMsg) failure() error { return m.err }
+
 // draftCreatedMsg reports a freshly minted creator-only draft skill.
 type draftCreatedMsg struct {
 	draft *api.SkillDraft

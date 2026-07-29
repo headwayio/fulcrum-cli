@@ -352,6 +352,46 @@ func TestMergeReportsConflictMarkers(t *testing.T) {
 	waitContains(t, h, "press e to resolve")
 }
 
+// --- discarding local edits ---
+
+func TestDiscardAsksBeforeDestroying(t *testing.T) {
+	deps := &fakeDeps{configured: true, serverURL: "http://srv", snapshot: allStatesSnapshot()}
+	h := newTestModel(t, deps)
+	waitContains(t, h, "drifted.json")
+
+	h.Type("j") // the drifted row
+	waitContains(t, h, "x discard mine")
+
+	// Anything but y keeps the edits — one keypress never destroys work.
+	h.Type("x")
+	waitContains(t, h, "discard your edits to drifted.json?")
+	h.Type("n")
+	waitContains(t, h, "kept your edits")
+	if len(deps.discarded) != 0 {
+		t.Fatalf("declining still discarded: %v", deps.discarded)
+	}
+
+	h.Type("x")
+	h.Type("y")
+	waitContains(t, h, "reverted")
+	waitContains(t, h, "your version kept at")
+	if len(deps.discarded) != 1 || deps.discarded[0] != "doc-drifted" {
+		t.Errorf("discarded = %v", deps.discarded)
+	}
+}
+
+func TestDiscardRefusedWithoutLocalEdits(t *testing.T) {
+	deps := &fakeDeps{configured: true, serverURL: "http://srv", snapshot: allStatesSnapshot()}
+	h := newTestModel(t, deps)
+	waitContains(t, h, "synced.md")
+
+	h.Type("x") // cursor starts on the synced row
+	waitContains(t, h, "nothing local to discard")
+	if len(deps.discarded) != 0 {
+		t.Errorf("discarded = %v", deps.discarded)
+	}
+}
+
 // --- new-skill draft flow ---
 
 func TestDraftSkillFlow(t *testing.T) {

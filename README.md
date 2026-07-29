@@ -32,7 +32,15 @@ and TUI are landing next. Nothing is tagged yet.
 When a document moved on both sides, `fulcrum merge` (or `m` in the TUI)
 three-way merges the server's version into yours against the copy from your
 last sync — clean where the changes do not overlap, git-style conflict
-markers where they do.
+markers where they do. If your side is not worth keeping, `fulcrum revert`
+(or `x`) takes the server's version instead and files your copy under
+`.fulcrum/discarded/`.
+
+`fulcrum skills install <project-dir>` writes the org's skills into whichever
+harness format that project uses — `.claude/skills/<slug>/SKILL.md` for
+Claude Code, a managed block in `AGENTS.md` for Codex and the other readers
+of that convention, or both with `--target all`. It only edits its own block;
+the rest of your `AGENTS.md` is yours.
 
 Then run `fulcrum` with no arguments for the interactive view, or script it:
 `fulcrum status --json` exits 0 when everything is fresh, 1 when anything is

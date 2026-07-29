@@ -76,6 +76,29 @@ func (w *Workspace) SyncDocument(doc api.ManifestDocument, body []byte) error {
 	return w.SaveState()
 }
 
+// DiscardedDir keeps a copy of thrown-away local edits. Discarding is the
+// one destructive verb this client has; a copy costs nothing and means a
+// wrong keypress is recoverable.
+const DiscardedDir = ".fulcrum/discarded"
+
+// BackupLocal copies the current working file aside and returns its path,
+// or "" when there is nothing local to keep.
+func (w *Workspace) BackupLocal(slug string) (string, error) {
+	body, err := w.ReadLocal(slug)
+	if err != nil || body == nil {
+		return "", err
+	}
+	recorded := w.State.Document(slug)
+	if recorded == nil {
+		return "", nil
+	}
+	path := filepath.Join(w.Dir, DiscardedDir, recorded.Filename)
+	if err := writeAtomic(path, body); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 // AdoptMerge records the server's current version as the new baseline while
 // leaving merged content in the working file. That is what makes a merge
 // honest downstream: the doc reclassifies from conflicted to drifted, and

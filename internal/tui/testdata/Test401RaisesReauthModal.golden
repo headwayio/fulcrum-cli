@@ -1,11 +1,11 @@
-[1mfulcrum[m[2m · connect[m
+[2mfulcrum[m[2m › [m[1mconnect[m
 
 [1mConnect to Fulcrum[m
 
 Mint a personal API token at [36mhttp://srv/settings/developer[m
 [2m(any signed-in member can; it is shown exactly once)[m
 
-[1;35m> [mServer:       http://srv[1;35m_[m
+[1;35m> [mServer:       http://srv
   Token:        [2mpaste your API token[m
 
 [2menter continue · ctrl+c quit[m

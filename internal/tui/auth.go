@@ -219,10 +219,15 @@ func (i *lineInput) render(active bool) string {
 		shown = strings.Repeat("*", len([]rune(shown)))
 	}
 	if shown == "" {
-		shown = dimStyle.Render(i.placeholder)
+		// Caret first, then the hint. Parked after the placeholder it reads
+		// as if the hint were already your text and the field were answered.
+		if active {
+			return caretMark + dimStyle.Render(i.placeholder)
+		}
+		return dimStyle.Render(i.placeholder)
 	}
 	if active {
-		shown += selectedStyle.Render("_")
+		return shown + caretMark
 	}
 	return shown
 }

@@ -33,7 +33,7 @@ type publishedReceipt struct {
 }
 
 func newPublishScreen(a *App, row Row) *publishScreen {
-	return &publishScreen{app: a, row: row, note: newLineInput("one line for the reviewer (required)", "")}
+	return &publishScreen{app: a, row: row, note: newLineInput("what changed, and why", "")}
 }
 
 func (s *publishScreen) init() tea.Cmd {
@@ -48,7 +48,8 @@ func (s *publishScreen) init() tea.Cmd {
 	}
 }
 
-func (s *publishScreen) title() string { return "publish · " + s.row.Filename }
+func (s *publishScreen) title() string    { return "publish" }
+func (s *publishScreen) crumbs() []string { return []string{s.row.Filename, "publish"} }
 
 func (s *publishScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -159,11 +160,15 @@ func (s *publishScreen) view() string {
 			b.WriteString(errStyle.Render("remote moved since your sync — this proposal will be flagged stale") + "\n\n")
 		}
 		b.WriteString(s.scroll.view(s.pageSize()) + "\n\n")
-		b.WriteString("Note: " + s.note.render(true) + "\n")
+		// The field gets its own labelled line and breathing room: buried in
+		// the run of hints under a long diff, nothing said "you type here".
+		b.WriteString(titleStyle.Render("Note to the reviewer") +
+			dimStyle.Render(" (required)") + "\n")
+		b.WriteString(accentStyle.Render("› ") + s.note.render(true) + "\n")
 		if s.errMsg != "" {
 			b.WriteString(errStyle.Render(s.errMsg) + "\n")
 		}
-		b.WriteString(dimStyle.Render("enter submit · pgup/pgdn scroll diff · esc cancel"))
+		b.WriteString("\n" + dimStyle.Render("enter submit · pgup/pgdn scroll diff · esc cancel"))
 	}
 	return b.String()
 }

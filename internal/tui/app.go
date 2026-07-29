@@ -3,9 +3,11 @@ package tui
 import (
 	"fmt"
 	"os/exec"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/headwayio/fulcrum-cli/internal/api"
 )
@@ -123,9 +125,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if key == "esc" && len(a.stack) > 1 {
 			a.stack = a.stack[:len(a.stack)-1]
-			a.status = ""
+			a.clearStatus()
 			return a, nil
 		}
+		// The status line reports the outcome of your last action, so acting
+		// again makes it history — even moving the cursor. Cleared before
+		// dispatch so a screen that sets a new status on this very key wins.
+		a.clearStatus()
 
 	case authFailedMsg:
 		a.authModal = msg.message
@@ -160,6 +166,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.stack[idx] = next
 	}
 	return a, cmd
+}
+
+// clearStatus drops a finished report. The offline notice survives: it
+// describes a condition that is still true, not something that just
+// happened, and the list clears it when the server comes back.
+func (a *App) clearStatus() {
+	if !a.statusOffline {
+		a.status = ""
+	}
 }
 
 // push adds a screen and returns its init command.
@@ -199,30 +214,116 @@ func (a *App) View() tea.View {
 		body = a.modalView()
 	}
 
-	header := titleStyle.Render("fulcrum") + dimStyle.Render(" · "+a.headerContext())
-	lines := []string{header, "", body}
+	lines := []string{a.breadcrumb(), "", body}
 	if a.status != "" && a.authModal == "" {
 		lines = append(lines, "", dimStyle.Render(a.status))
 	}
-	view := tea.NewView(strings.Join(lines, "\n"))
+	content := strings.Join(lines, "\n")
+
+	view := tea.NewView(content)
+	// A real terminal cursor blinks where the shell's does; a drawn glyph
+	// never will. Fields plant a sentinel, which is found here (after every
+	// screen has laid itself out) and stripped before anything renders.
+	if col, row, ok := findCaret(content); ok {
+		view.Content = strings.Replace(content, caretMark, "", 1)
+		view.Cursor = tea.NewCursor(col, row)
+	}
 	return view
 }
 
-func (a *App) headerContext() string {
+// breadcrumb says how deep you are and how you got here: a trail of carets,
+// ancestors dimmed, current location bright. Dots read as siblings — a row
+// of tabs — which is what this line is not.
+func (a *App) breadcrumb() string {
+	crumbs := []string{"fulcrum"}
+	if a.snapshot != nil && a.snapshot.OrgName != "" {
+		crumbs = append(crumbs, a.snapshot.OrgName)
+	}
 	if len(a.stack) == 0 {
-		return a.version
+		crumbs = append(crumbs, a.version)
 	}
-	top := a.stack[len(a.stack)-1]
-	parts := []string{top.title()}
-	if a.snapshot != nil {
-		if a.snapshot.OrgName != "" {
-			parts = append([]string{a.snapshot.OrgName}, parts...)
+	for _, s := range a.stack {
+		crumbs = appendCrumbs(crumbs, s)
+	}
+	crumbs = fitCrumbs(crumbs, a.termWidth())
+
+	// Every ancestor recedes, the app name included: it never changes, and
+	// emphasis belongs on where you are. One bright crumb per line.
+	var trail string
+	for i, crumb := range crumbs {
+		if i > 0 {
+			trail += dimStyle.Render(" › ")
 		}
-		if !a.snapshot.Reachable {
-			parts = append(parts, errStyle.Render("OFFLINE"))
+		if i == len(crumbs)-1 {
+			trail += titleStyle.Render(crumb) // you are here
+			continue
+		}
+		trail += dimStyle.Render(crumb)
+	}
+	if a.snapshot != nil && !a.snapshot.Reachable {
+		trail += "  " + errStyle.Render("OFFLINE")
+	}
+	return trail
+}
+
+// crumber lets a screen contribute more than one level — publish over a
+// document is two: which document, then what you are doing to it.
+type crumber interface{ crumbs() []string }
+
+// appendCrumbs skips anything already on the trail, so opening publish from
+// a diff of the same file names that file once.
+func appendCrumbs(trail []string, s screen) []string {
+	next := []string{s.title()}
+	if c, ok := s.(crumber); ok {
+		next = c.crumbs()
+	}
+	for _, crumb := range next {
+		if !slices.Contains(trail, crumb) {
+			trail = append(trail, crumb)
 		}
 	}
-	return strings.Join(parts, " · ")
+	return trail
+}
+
+// fitCrumbs drops the oldest ancestors first, keeping the root and as much
+// of the tail as fits: the deep end says where you are and what you are
+// working on, and a wrapped header costs a whole row of the list.
+func fitCrumbs(crumbs []string, width int) []string {
+	fits := func(c []string) bool { return lipgloss.Width(strings.Join(c, " › ")) <= width }
+	if len(crumbs) < 4 || fits(crumbs) {
+		return crumbs
+	}
+	tail := crumbs[1:]
+	for len(tail) > 1 {
+		if elided := append([]string{crumbs[0], "…"}, tail...); fits(elided) {
+			return elided
+		}
+		tail = tail[1:]
+	}
+	return append([]string{crumbs[0], "…"}, tail...)
+}
+
+func (a *App) termWidth() int {
+	if a.width <= 0 {
+		return 80
+	}
+	return a.width
+}
+
+// caretMark is a zero-width sentinel a field plants where typing lands. It
+// travels through whatever layout the screen wraps around it, which keeps
+// the cursor correct without every screen re-deriving its own geometry.
+const caretMark = "\x00"
+
+func findCaret(content string) (col, row int, ok bool) {
+	idx := strings.Index(content, caretMark)
+	if idx < 0 {
+		return 0, 0, false
+	}
+	before := content[:idx]
+	row = strings.Count(before, "\n")
+	// Columns, not bytes: the prefix carries ANSI styling and wide runes.
+	return lipgloss.Width(before[strings.LastIndex(before, "\n")+1:]), row, true
 }
 
 // keysView is the whole vocabulary in one place, so the per-row hint line

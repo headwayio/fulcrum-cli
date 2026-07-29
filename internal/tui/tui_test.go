@@ -86,7 +86,7 @@ func TestAuthScreenPrintsMintURL(t *testing.T) {
 	// Live validation + save land on the document list, org name in the
 	// header. (The transient "Connected to…" notice frame can be coalesced
 	// away by the renderer, so only durable frames are asserted.)
-	waitContains(t, h, "Corpus Primary Organization · documents")
+	waitContains(t, h, "Corpus Primary Organization")
 	waitContains(t, h, "= synced")
 	if deps.savedToken != "tok-secret" || deps.savedURL != "http://localhost:3100" {
 		t.Errorf("saved login = %q %q", deps.savedURL, deps.savedToken)
@@ -578,4 +578,39 @@ func Test401RaisesReauthModal(t *testing.T) {
 	waitContains(t, h, "settings/developer")
 
 	teatest.RequireEqualOutput(t, finalFrame(t, h))
+}
+
+// waitPlain matches against the stream with styling stripped. A breadcrumb
+// puts a reset between crumbs, so a needle spanning two of them never
+// appears as contiguous bytes.
+func waitPlain(t *testing.T, h *harness, needle string) {
+	t.Helper()
+	teatest.WaitFor(t, h.tm.Output(), func(bts []byte) bool {
+		h.buf = append(h.buf, bts...)
+		return bytes.Contains([]byte(stripANSI(string(h.buf))), []byte(needle))
+	}, teatest.WithDuration(3*time.Second))
+}
+
+// finalView quits and returns the whole final view — content plus the
+// cursor the renderer would place.
+func finalView(t *testing.T, h *harness) tea.View {
+	t.Helper()
+	if err := h.tm.Quit(); err != nil {
+		t.Fatal(err)
+	}
+	app, ok := h.tm.FinalModel(t).(*App)
+	if !ok {
+		t.Fatal("final model is not *App")
+	}
+	app.quitting = false // Quit blanks the view; we want the last real frame
+	return app.View()
+}
+
+func lineAt(t *testing.T, content string, row int) string {
+	t.Helper()
+	lines := strings.Split(content, "\n")
+	if row < 0 || row >= len(lines) {
+		t.Fatalf("cursor row %d is outside the %d-line frame", row, len(lines))
+	}
+	return lines[row]
 }

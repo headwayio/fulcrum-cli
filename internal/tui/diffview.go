@@ -57,7 +57,8 @@ func (s *diffScreen) init() tea.Cmd {
 	}
 }
 
-func (s *diffScreen) title() string { return "diff · " + s.row.Filename }
+func (s *diffScreen) title() string    { return "diff" }
+func (s *diffScreen) crumbs() []string { return []string{s.row.Filename, "diff"} }
 
 func (s *diffScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	switch msg := msg.(type) {

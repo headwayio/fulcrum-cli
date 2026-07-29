@@ -47,6 +47,9 @@ func newFixtureServer() *fixtureServer {
 		case "estimation-rubric-source":
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(corpusFile("documents", "estimation-rubric.json"))
+		case "skill-corpus-writing-specs":
+			w.Header().Set("Content-Type", "text/markdown")
+			w.Write(corpusFile("documents", "skill-corpus-writing-specs.md"))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			w.Write(corpusFile("errors", "unknown_document.json"))

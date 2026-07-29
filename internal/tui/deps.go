@@ -44,8 +44,10 @@ type Snapshot struct {
 	UserEmail string
 	Reachable bool
 	NetErr    string
-	Rows      []Row
-	Manifest  *api.Manifest
+	// SkillProposals: the server accepts markdown (org skill) proposals.
+	SkillProposals bool
+	Rows           []Row
+	Manifest       *api.Manifest
 }
 
 // Deps is the TUI's whole outside world.
@@ -171,6 +173,7 @@ func (l *Live) Refresh() (*Snapshot, error) {
 		}
 		snapshot.Manifest = manifest
 		snapshot.OrgName = manifest.Organization.Name
+		snapshot.SkillProposals = manifest.API.Has("skill_proposals")
 		if manifest.User != nil {
 			snapshot.UserEmail = manifest.User.Email
 		}

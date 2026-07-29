@@ -56,7 +56,9 @@ func (a *App) runPublish(yes bool, note string) error {
 
 	submitted := 0
 	for _, doc := range manifest.Documents {
-		if doc.Format != "json" {
+		// Publishable = anything with a proposal slug: JSON sources and org
+		// skills alike. Generated renderings have none.
+		if proposalSlug(doc) == "" {
 			continue
 		}
 		local, readErr := w.ReadLocal(doc.Slug)
@@ -84,9 +86,19 @@ func (a *App) runPublish(yes bool, note string) error {
 		}
 
 		var document map[string]any
-		if err := json.Unmarshal(local, &document); err != nil {
-			fmt.Fprintf(a.Stdout, "%s: not valid JSON, nothing submitted (%.120s)\n", doc.Filename, err.Error())
-			continue
+		if doc.Format == "json" {
+			if err := json.Unmarshal(local, &document); err != nil {
+				fmt.Fprintf(a.Stdout, "%s: not valid JSON, nothing submitted (%.120s)\n", doc.Filename, err.Error())
+				continue
+			}
+		} else {
+			// Markdown publishes as the content wrap — needs the server to
+			// accept skill proposals.
+			if !manifest.API.Has("skill_proposals") {
+				fmt.Fprintf(a.Stdout, "%s: this server does not accept markdown proposals yet, skipped\n", doc.Filename)
+				continue
+			}
+			document = map[string]any{"content": string(local)}
 		}
 
 		baseDigest := ""
@@ -117,10 +129,14 @@ func (a *App) runPublish(yes bool, note string) error {
 }
 
 // proposalSlug prefers the manifest's mapping (contract 1); the documented
-// "-source" convention covers pre-contract servers.
+// "-source" convention covers JSON docs on pre-contract servers. Markdown
+// without an explicit mapping is a generated rendering — not proposable.
 func proposalSlug(doc api.ManifestDocument) string {
 	if doc.ProposalSlug != nil {
 		return *doc.ProposalSlug
 	}
-	return strings.TrimSuffix(doc.Slug, "-source")
+	if doc.Format == "json" {
+		return strings.TrimSuffix(doc.Slug, "-source")
+	}
+	return ""
 }

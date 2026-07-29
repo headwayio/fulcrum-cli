@@ -116,8 +116,13 @@ func (s *publishScreen) submit() (screen, tea.Cmd) {
 			return publishedMsg{err: err}
 		}
 		var document map[string]any
-		if err := json.Unmarshal(local, &document); err != nil {
-			return publishedMsg{err: fmt.Errorf("not valid JSON, nothing submitted: %.120s", err.Error())}
+		if row.Format == "json" {
+			if err := json.Unmarshal(local, &document); err != nil {
+				return publishedMsg{err: fmt.Errorf("not valid JSON, nothing submitted: %.120s", err.Error())}
+			}
+		} else {
+			// Markdown (org skills) publishes as the content wrap.
+			document = map[string]any{"content": string(local)}
 		}
 		receipt, err := deps.Publish(row.ProposalSlug, document, row.BaseDigest, note)
 		return publishedMsg{receipt: receipt, err: err}

@@ -162,8 +162,12 @@ func (s *listScreen) routeEnter(row Row) (screen, tea.Cmd) {
 }
 
 func (s *listScreen) routePublish(row Row) (screen, tea.Cmd) {
-	if row.Format != "json" || row.ProposalSlug == "" {
+	if row.ProposalSlug == "" {
 		s.app.status = "generated rendering — edit the .json document and publish that"
+		return s, nil
+	}
+	if row.Format != "json" && (s.app.snapshot == nil || !s.app.snapshot.SkillProposals) {
+		s.app.status = "this server does not accept markdown proposals yet"
 		return s, nil
 	}
 	if s.offline() {
@@ -241,7 +245,7 @@ func (s *listScreen) hints(row Row) string {
 		state.Unsynced:   "—",
 	}[row.Classification]
 	hints := []string{"enter " + enterVerb, "e edit", "s sync", "r refresh", "f push-facts", "q quit"}
-	if row.Format == "json" && row.ProposalSlug != "" {
+	if row.ProposalSlug != "" {
 		hints = append(hints[:1], append([]string{"p publish"}, hints[1:]...)...)
 	}
 	return strings.Join(hints, " · ")

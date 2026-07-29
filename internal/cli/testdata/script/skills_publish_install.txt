@@ -1,0 +1,40 @@
+# Org skills end to end: sync them down, install them into a project's
+# .claude/skills (the shape Claude Code loads), edit → publish as a markdown
+# content-wrap proposal, and watch the outcome reconcile.
+
+fulcrum sync
+grep 'synced skill-corpus-writing-specs.md' last-stdout.txt
+
+fulcrum skills install $WORK/proj
+grep 'installed corpus-writing-specs' last-stdout.txt
+exists proj/.claude/skills/corpus-writing-specs/SKILL.md
+cmp proj/.claude/skills/corpus-writing-specs/SKILL.md skills/skill-corpus-writing-specs.md
+grep 'corpus-writing-specs' proj/.claude/skills/.fulcrum-installed.json
+
+# Idempotent: re-running converges, no drift, no error.
+fulcrum skills install $WORK/proj
+cmp proj/.claude/skills/corpus-writing-specs/SKILL.md skills/skill-corpus-writing-specs.md
+
+# Edit the skill locally → drifted → publish sends {"content": markdown}.
+cp edited-skill.md skills/skill-corpus-writing-specs.md
+fulcrum -code 1 status
+grep 'drifted' last-stdout.txt
+
+fulcrum publish --yes --note sharper
+grep 'Proposal #101 submitted' last-stdout.txt
+srv count 1
+
+# The reviewer applies it; the row resolves instead of staying proposed.
+srv apply 101
+fulcrum -code 1 status
+grep 'proposal #101 accepted' last-stdout.txt
+
+-- edited-skill.md --
+---
+name: corpus-writing-specs
+description: How this team writes request specs.
+---
+
+# corpus-writing-specs
+
+Name the behavior, not the implementation. Sharper now.

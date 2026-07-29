@@ -44,7 +44,10 @@ func TestCorpusManifestDecodes(t *testing.T) {
 	if m.API == nil || m.API.Contract != 1 {
 		t.Fatalf("api block = %+v", m.API)
 	}
-	for _, capability := range []string{"skills", "proposals", "proposals_index", "projects", "architecture"} {
+	for _, capability := range []string{
+		"skills", "proposals", "proposals_index", "projects", "architecture",
+		"org_skills", "skill_proposals",
+	} {
 		if !m.API.Has(capability) {
 			t.Errorf("missing capability %q", capability)
 		}
@@ -56,7 +59,7 @@ func TestCorpusManifestDecodes(t *testing.T) {
 		t.Errorf("download = %q", m.API.Download)
 	}
 
-	if len(m.Documents) != 2 {
+	if len(m.Documents) != 3 {
 		t.Fatalf("documents = %d", len(m.Documents))
 	}
 	bySlug := map[string]ManifestDocument{}
@@ -72,6 +75,15 @@ func TestCorpusManifestDecodes(t *testing.T) {
 	}
 	if md.Digest == "" || md.Digest != source.Digest {
 		t.Errorf("digests: md=%q source=%q", md.Digest, source.Digest)
+	}
+
+	// Org skills: markdown that IS the source, flat filename, self proposal_slug.
+	skill := bySlug["skill-corpus-writing-specs"]
+	if skill.Format != "markdown" || skill.Filename != "skill-corpus-writing-specs.md" {
+		t.Errorf("skill doc = %+v", skill)
+	}
+	if skill.ProposalSlug == nil || *skill.ProposalSlug != "skill-corpus-writing-specs" {
+		t.Errorf("skill proposal_slug = %v", skill.ProposalSlug)
 	}
 }
 

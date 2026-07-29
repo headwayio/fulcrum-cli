@@ -111,8 +111,8 @@ func TestReconcileOffline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 2 {
-		t.Fatalf("offline rows = %d", len(rows))
+	if len(rows) != 3 {
+		t.Fatalf("offline rows = %d (corpus manifest documents)", len(rows))
 	}
 	bySlug := map[string]DocStatus{}
 	for _, row := range rows {

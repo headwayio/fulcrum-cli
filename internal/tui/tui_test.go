@@ -274,9 +274,9 @@ func TestDiffThreeWayConflicted(t *testing.T) {
 func TestReaderBehindPreviewsRemote(t *testing.T) {
 	deps := &fakeDeps{
 		configured: true, serverURL: "http://srv", snapshot: allStatesSnapshot(),
-		localDocs:  map[string][]byte{"doc-behind": []byte("# Old local copy\n")},
-		remoteDocs: map[string][]byte{"doc-behind": []byte("# Fresh remote content\n")},
-		syncLines:  []string{"synced behind.md"},
+		localDocs:   map[string][]byte{"doc-behind": []byte("# Old local copy\n")},
+		remoteDocs:  map[string][]byte{"doc-behind": []byte("# Fresh remote content\n")},
+		syncSummary: SyncSummary{Synced: 1, Skipped: 2, Fresh: 3},
 	}
 	h := newTestModel(t, deps)
 	waitContains(t, h, "behind.md")
@@ -294,7 +294,7 @@ func TestReaderBehindPreviewsRemote(t *testing.T) {
 	waitContains(t, h, "Fresh remote content")
 
 	h.Type("s") // safe re-sync: back on the list with the result
-	waitContains(t, h, "synced behind.md")
+	waitContains(t, h, "synced 1")
 
 	teatest.RequireEqualOutput(t, finalFrame(t, h))
 }

@@ -30,15 +30,15 @@ type fakeDeps struct {
 	publishErr     error
 	published      []string
 
-	proposals map[int64]*api.Proposal
-	projects  []api.Project
-	facts     *scan.Facts
-	pushedTo  []int64
-	opened    []string
-	syncLines []string
-	refreshes int
-	drafted   []string
-	draftErr  error
+	proposals   map[int64]*api.Proposal
+	projects    []api.Project
+	facts       *scan.Facts
+	pushedTo    []int64
+	opened      []string
+	syncSummary SyncSummary
+	refreshes   int
+	drafted     []string
+	draftErr    error
 
 	merged         []string
 	mergeConflicts int
@@ -94,7 +94,7 @@ func (f *fakeDeps) LocalPath(slug string) string {
 // without a real editor.
 func (f *fakeDeps) Editor() string { return "true" }
 
-func (f *fakeDeps) SyncAll(force bool) ([]string, error) { return f.syncLines, nil }
+func (f *fakeDeps) SyncAll(force bool) (SyncSummary, error) { return f.syncSummary, nil }
 
 func (f *fakeDeps) MergeRemote(slug string) (*MergeOutcome, error) {
 	if f.mergeErr != nil {

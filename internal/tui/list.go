@@ -72,7 +72,7 @@ func (s *listScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.app.status = errStyle.Render(errorLine(msg.err))
 			return s, nil
 		}
-		s.app.status = strings.Join(msg.lines, " · ")
+		s.app.status = msg.summary.Line()
 		return s, s.refreshCmd()
 
 	case mergedMsg:
@@ -167,8 +167,8 @@ func (s *listScreen) handleKey(key string) (screen, tea.Cmd) {
 		s.loading = true
 		deps := s.app.deps
 		return s, func() tea.Msg {
-			lines, err := deps.SyncAll(false)
-			return syncedMsg{lines: lines, err: err}
+			summary, err := deps.SyncAll(false)
+			return syncedMsg{summary: summary, err: err}
 		}
 	case "enter":
 		if len(rows) == 0 {

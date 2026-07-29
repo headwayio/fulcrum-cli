@@ -40,8 +40,8 @@ type docLoadedMsg struct {
 
 // syncedMsg reports a SyncAll.
 type syncedMsg struct {
-	lines []string
-	err   error
+	summary SyncSummary
+	err     error
 }
 
 // publishedMsg reports a proposal submission.

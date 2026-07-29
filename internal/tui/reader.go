@@ -81,7 +81,7 @@ func (s *readerScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, nil
 		}
 		// Re-synced: back to the list with fresh classifications.
-		s.app.status = strings.Join(msg.lines, " · ")
+		s.app.status = msg.summary.Line()
 		s.app.pop()
 		if list, ok := s.app.stack[0].(*listScreen); ok {
 			return s, list.refreshCmd()
@@ -138,8 +138,8 @@ func (s *readerScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			deps := s.app.deps
 			s.app.status = "syncing…"
 			return s, func() tea.Msg {
-				lines, err := deps.SyncAll(false)
-				return syncedMsg{lines: lines, err: err}
+				summary, err := deps.SyncAll(false)
+				return syncedMsg{summary: summary, err: err}
 			}
 		default:
 			s.scroll.handleKey(key, s.pageSize())

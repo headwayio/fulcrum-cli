@@ -47,6 +47,51 @@ type Row struct {
 	OutcomeID int64
 }
 
+// SyncSummary counts what a sync did. Counts rather than a line per
+// document: the list right above already names every document and its
+// state, so repeating the filenames says nothing new.
+type SyncSummary struct {
+	Synced   int
+	Fresh    int
+	Skipped  int
+	Drafts   int
+	Projects int
+}
+
+// Line is the one-line report: what changed, then what was deliberately
+// left behind. Documents that were already current are counted only on a
+// quiet run — once something moved, "already current" is filler, and the
+// line has to stay inside 80 columns to be worth reading.
+func (s SyncSummary) Line() string {
+	var parts []string
+	if s.Synced > 0 {
+		parts = append(parts, fmt.Sprintf("synced %d", s.Synced))
+	}
+	if s.Skipped > 0 {
+		parts = append(parts, fmt.Sprintf("%d kept your edits", s.Skipped))
+	}
+	if s.Synced == 0 && s.Skipped == 0 && s.Fresh > 0 {
+		parts = append(parts, fmt.Sprintf("%d already current", s.Fresh))
+	}
+	if s.Drafts > 0 {
+		parts = append(parts, fmt.Sprintf("%s untouched", plural(s.Drafts, "draft")))
+	}
+	if s.Projects > 0 {
+		parts = append(parts, fmt.Sprintf("refreshed %s", plural(s.Projects, "project")))
+	}
+	if len(parts) == 0 {
+		return "nothing to sync"
+	}
+	return strings.Join(parts, " · ")
+}
+
+func plural(n int, word string) string {
+	if n == 1 {
+		return "1 " + word
+	}
+	return fmt.Sprintf("%d %ss", n, word)
+}
+
 // MergeOutcome reports what a three-way merge produced.
 type MergeOutcome struct {
 	Filename  string
@@ -97,9 +142,8 @@ type Deps interface {
 	// Editor is the command that edits files ($EDITOR, fallback vi).
 	Editor() string
 
-	// SyncAll pulls fresh docs, skipping local edits unless force; returns
-	// human summary lines.
-	SyncAll(force bool) ([]string, error)
+	// SyncAll pulls fresh docs, skipping local edits unless force.
+	SyncAll(force bool) (SyncSummary, error)
 	// CreateSkillDraft mints a creator-only draft on the server and lands it
 	// in the workspace, tracked like any synced document.
 	CreateSkillDraft(name string) (*api.SkillDraft, error)
@@ -332,45 +376,45 @@ func (l *Live) RemoteDoc(slug string) ([]byte, error) {
 	return res.Body, nil
 }
 
-func (l *Live) SyncAll(force bool) ([]string, error) {
+func (l *Live) SyncAll(force bool) (SyncSummary, error) {
+	var sum SyncSummary
 	w, err := l.workspace()
 	if err != nil {
-		return nil, err
+		return sum, err
 	}
 	manifest, _, err := l.client().Manifest(context.Background(), "")
 	if err != nil {
-		return nil, err
+		return sum, err
 	}
-	var lines []string
 	for _, doc := range manifest.Documents {
 		local, readErr := w.ReadLocal(doc.Slug)
 		if readErr != nil {
-			return lines, readErr
+			return sum, readErr
 		}
 		c := w.State.Classify(doc.Slug, local, doc.Digest)
 		// Same rule as the CLI: a draft has no upstream, so bulk sync never
 		// touches it — not even with force.
 		if doc.Draft {
-			lines = append(lines, fmt.Sprintf("draft %s left alone", doc.Filename))
+			sum.Drafts++
 			continue
 		}
 		if !force && c == state.Synced {
 			// Digest identity: nothing moved, so there is nothing to fetch.
-			lines = append(lines, fmt.Sprintf("fresh %s", doc.Filename))
+			sum.Fresh++
 			continue
 		}
 		if !force && (c == state.Drifted || c == state.Conflicted || c == state.Proposed) {
-			lines = append(lines, fmt.Sprintf("skipped %s (%s — local edits kept)", doc.Filename, c))
+			sum.Skipped++
 			continue
 		}
 		res, docErr := l.client().Document(context.Background(), doc.Slug, "")
 		if docErr != nil {
-			return lines, docErr
+			return sum, docErr
 		}
 		if err := w.SyncDocument(doc, res.Body); err != nil {
-			return lines, err
+			return sum, err
 		}
-		lines = append(lines, fmt.Sprintf("synced %s", doc.Filename))
+		sum.Synced++
 	}
 
 	// Same rule as the CLI: whatever landed reaches the projects already
@@ -379,10 +423,10 @@ func (l *Live) SyncAll(force bool) ([]string, error) {
 	install.Refresh(w, &refreshed, io.Discard)
 	for _, line := range strings.Split(strings.TrimSpace(refreshed.String()), "\n") {
 		if line != "" {
-			lines = append(lines, line)
+			sum.Projects++
 		}
 	}
-	return lines, nil
+	return sum, nil
 }
 
 func (l *Live) CreateSkillDraft(name string) (*api.SkillDraft, error) {

@@ -1,0 +1,243 @@
+package tui
+
+import (
+	"bytes"
+	"testing"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
+	"github.com/charmbracelet/x/exp/teatest/v2"
+
+	"github.com/headwayio/fulcrum-cli/internal/api"
+)
+
+// harness wraps a TestModel with a CUMULATIVE output buffer: teatest's
+// WaitFor starts each call with an empty read buffer, so a needle whose
+// bytes an earlier wait already consumed would never match again.
+type harness struct {
+	tm  *teatest.TestModel
+	buf []byte
+}
+
+// Every test pins the color profile to Ascii — unpinned goldens flake across
+// terminals — and pins the glamour style to notty for the same reason.
+func newTestModel(t *testing.T, deps Deps) *harness {
+	t.Helper()
+	tm := teatest.NewTestModel(t, New(deps, "test", "notty"),
+		teatest.WithInitialTermSize(80, 24),
+		teatest.WithProgramOptions(tea.WithColorProfile(colorprofile.Ascii)),
+	)
+	return &harness{tm: tm}
+}
+
+func (h *harness) Type(s string)    { h.tm.Type(s) }
+func (h *harness) Send(msg tea.Msg) { h.tm.Send(msg) }
+
+func waitContains(t *testing.T, h *harness, needle string) {
+	t.Helper()
+	teatest.WaitFor(t, h.tm.Output(), func(bts []byte) bool {
+		h.buf = append(h.buf, bts...)
+		return bytes.Contains(h.buf, []byte(needle))
+	}, teatest.WithDuration(3*time.Second))
+}
+
+// finalFrame quits and returns the last full frame from the final model —
+// a deterministic, readable golden (the raw stream is delta-rendered).
+func finalFrame(t *testing.T, h *harness) []byte {
+	t.Helper()
+	if err := h.tm.Quit(); err != nil {
+		t.Fatal(err)
+	}
+	app, ok := h.tm.FinalModel(t).(*App)
+	if !ok {
+		t.Fatal("final model is not *App")
+	}
+	return []byte(app.View().Content)
+}
+
+func enter() tea.KeyPressMsg { return tea.KeyPressMsg{Code: tea.KeyEnter} }
+
+// --- first-run auth ---
+
+func TestAuthScreenPrintsMintURL(t *testing.T) {
+	deps := &fakeDeps{
+		configured: false,
+		serverURL:  "http://localhost:3100",
+		validateManifest: &api.Manifest{
+			Organization: api.Organization{ID: 1, Name: "Corpus Primary Organization"},
+			User:         &api.User{Email: "developer@corpus.usefulcrum.test"},
+		},
+		snapshot: allStatesSnapshot(),
+	}
+	h := newTestModel(t, deps)
+
+	// The exact member-settings URL is on screen before anything is typed.
+	waitContains(t, h, "http://localhost:3100/settings/developer")
+	waitContains(t, h, "shown exactly once")
+
+	h.Send(enter()) // accept the prefilled server URL
+	h.Type("tok-secret")
+	h.Send(enter())
+
+	// Live validation + save land on the document list, org name in the
+	// header. (The transient "Connected to…" notice frame can be coalesced
+	// away by the renderer, so only durable frames are asserted.)
+	waitContains(t, h, "Corpus Primary Organization · documents")
+	waitContains(t, h, "= synced")
+	if deps.savedToken != "tok-secret" || deps.savedURL != "http://localhost:3100" {
+		t.Errorf("saved login = %q %q", deps.savedURL, deps.savedToken)
+	}
+
+	teatest.RequireEqualOutput(t, finalFrame(t, h))
+}
+
+func TestAuthScreenMasksToken(t *testing.T) {
+	deps := &fakeDeps{configured: false, serverURL: "http://localhost:3100"}
+	h := newTestModel(t, deps)
+	waitContains(t, h, "settings/developer")
+	h.Send(enter())
+	h.Type("supersecret")
+	waitContains(t, h, "***")
+
+	out := finalFrame(t, h)
+	if bytes.Contains(out, []byte("supersecret")) {
+		t.Error("the token must never render in the clear")
+	}
+}
+
+// --- document list ---
+
+func TestListShowsEveryBadgeGlyphAndWord(t *testing.T) {
+	deps := &fakeDeps{configured: true, serverURL: "http://srv", snapshot: allStatesSnapshot()}
+	h := newTestModel(t, deps)
+
+	waitContains(t, h, "Corpus Primary Organization")
+	for _, label := range []string{
+		"= synced", "~ drifted", "v behind", "! CONFLICTED",
+		"^ proposed", "x missing", "+ applied #7 (re-sync)",
+	} {
+		waitContains(t, h, label)
+	}
+	waitContains(t, h, "7 document(s), 5 stale")
+
+	teatest.RequireEqualOutput(t, finalFrame(t, h))
+}
+
+func TestListOfflineHeaderIsHonest(t *testing.T) {
+	snapshot := allStatesSnapshot()
+	snapshot.Reachable = false
+	snapshot.NetErr = "dial tcp: connection refused"
+	deps := &fakeDeps{configured: true, serverURL: "http://srv", snapshot: snapshot}
+	h := newTestModel(t, deps)
+
+	waitContains(t, h, "OFFLINE")
+	waitContains(t, h, "showing last-known state")
+
+	// Network verbs are disabled honestly, not hidden: sync says why.
+	h.Type("s")
+	waitContains(t, h, "offline — sync needs the server")
+
+	teatest.RequireEqualOutput(t, finalFrame(t, h))
+}
+
+func TestPublishGreyedOnGeneratedMarkdown(t *testing.T) {
+	deps := &fakeDeps{configured: true, serverURL: "http://srv", snapshot: allStatesSnapshot()}
+	h := newTestModel(t, deps)
+	waitContains(t, h, "synced.md")
+
+	h.Type("p") // cursor starts on the generated markdown row
+	waitContains(t, h, "generated rendering — edit the .json document and publish that")
+}
+
+// --- publish wizard ---
+
+func TestPublishWizardFlow(t *testing.T) {
+	deps := &fakeDeps{
+		configured: true,
+		serverURL:  "http://srv",
+		snapshot:   allStatesSnapshot(),
+		localDocs:  map[string][]byte{"doc-drifted": []byte("{\"status\": \"edited\"}\n")},
+		baseDocs:   map[string][]byte{"doc-drifted": []byte("{\"status\": \"original\"}\n")},
+		publishReceipt: &api.ProposalReceipt{
+			ID: 55, Status: "pending", BasedOnCurrent: false,
+			ReviewURL: "/knowledge_proposals/55",
+		},
+	}
+	h := newTestModel(t, deps)
+	waitContains(t, h, "drifted.json")
+
+	h.Type("j") // move to the drifted row
+	h.Type("p")
+	waitContains(t, h, `-{"status": "original"}`)
+	waitContains(t, h, `+{"status": "edited"}`)
+
+	// The note is required: enter without one refuses.
+	h.Send(enter())
+	waitContains(t, h, "the reviewer note is required")
+
+	h.Type("widened per client call")
+	h.Send(enter())
+
+	// based_on_current arrives verbatim, flagged when false.
+	waitContains(t, h, "Proposal #55 submitted")
+	waitContains(t, h, "based_on_current: false")
+	waitContains(t, h, "http://srv/knowledge_proposals/55")
+
+	h.Type("o")
+	waitContains(t, h, "opened http://srv/knowledge_proposals/55")
+	if len(deps.opened) != 1 || deps.opened[0] != "http://srv/knowledge_proposals/55" {
+		t.Errorf("opened = %v", deps.opened)
+	}
+	if len(deps.published) != 1 {
+		t.Fatalf("published = %v", deps.published)
+	}
+	// The proposal went to the PROPOSAL slug with the last-sync base digest.
+	if deps.published[0] != "doc-drifted-target base=aaaabbbbccccdddd note=widened per client call" {
+		t.Errorf("published = %q", deps.published[0])
+	}
+
+	teatest.RequireEqualOutput(t, finalFrame(t, h))
+}
+
+// --- reader ---
+
+func TestReaderRendersFrontmatterAsHeader(t *testing.T) {
+	deps := &fakeDeps{
+		configured: true, serverURL: "http://srv", snapshot: allStatesSnapshot(),
+		localDocs: map[string][]byte{
+			"doc-synced": []byte("---\nname: estimation-rubric\ndigest: abc123\n---\n\n# Heading\n\nBody text here.\n"),
+		},
+	}
+	h := newTestModel(t, deps)
+	waitContains(t, h, "synced.md")
+
+	h.Send(enter())
+	waitContains(t, h, "name: estimation-rubric") // frontmatter → header lines
+	waitContains(t, h, "Heading")
+	waitContains(t, h, "Body text here.")
+
+	teatest.RequireEqualOutput(t, finalFrame(t, h))
+}
+
+// --- mid-session 401 ---
+
+func Test401RaisesReauthModal(t *testing.T) {
+	deps := &fakeDeps{
+		configured: true,
+		serverURL:  "http://srv",
+		refreshErr: &api.Error{Status: 401, Method: "GET", Path: "/api/agent_context/skills",
+			Code: "unauthorized", ServerMessage: "unauthorized: pass Authorization: Bearer <token>"},
+	}
+	h := newTestModel(t, deps)
+
+	waitContains(t, h, "Session rejected (401)")
+	waitContains(t, h, "rotated or revoked")
+
+	// l routes into the login screen with the mint hint.
+	h.Type("l")
+	waitContains(t, h, "Connect to Fulcrum")
+	waitContains(t, h, "settings/developer")
+
+	teatest.RequireEqualOutput(t, finalFrame(t, h))
+}

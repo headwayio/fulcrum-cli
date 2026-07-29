@@ -508,6 +508,38 @@ func TestDraftRowIsBadged(t *testing.T) {
 	waitContains(t, h, "draft (only you)")
 }
 
+// --- choosing an organization ---
+
+func TestOrgPickerTakesOverWhenTheServerNeedsOne(t *testing.T) {
+	deps := &fakeDeps{
+		configured: true,
+		serverURL:  "http://srv",
+		snapshot:   allStatesSnapshot(),
+		refreshErr: &api.Error{
+			Status: 422, Method: "GET", Path: "/api/agent_context/skills",
+			Code:          "organization_required",
+			ServerMessage: "organization required: pass organization_id",
+			Organizations: []api.Organization{{ID: 2, Name: "Headway"}, {ID: 21, Name: "Jono"}},
+		},
+	}
+	h := newTestModel(t, deps)
+
+	// Already configured, so this is not the login screen — the picker takes
+	// over rather than leaving an error in the status line with no way out.
+	waitContains(t, h, "Which organization?")
+	waitContains(t, h, "Headway")
+	waitContains(t, h, "Jono")
+
+	h.Type("j") // choose the second
+	h.Send(enter())
+	waitContains(t, h, "working in Jono")
+	if deps.chosenOrg != "21" {
+		t.Errorf("chosen org = %q, want 21", deps.chosenOrg)
+	}
+	// The choice unblocks the documents.
+	waitContains(t, h, "= synced")
+}
+
 // --- mid-session 401 ---
 
 func Test401RaisesReauthModal(t *testing.T) {

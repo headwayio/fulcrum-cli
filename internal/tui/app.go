@@ -133,9 +133,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if f, ok := msg.(failable); ok {
-		if apiErr, is := api.AsError(f.failure()); is && apiErr.Status == 401 {
-			a.authModal = apiErr.ServerMessage
-			return a, nil
+		if apiErr, is := api.AsError(f.failure()); is {
+			switch {
+			case apiErr.Status == 401:
+				a.authModal = apiErr.ServerMessage
+				return a, nil
+			case apiErr.Code == "organization_required":
+				// Nothing can load until this is answered, so it takes over
+				// rather than sitting in the status line as a dead end.
+				picker := newOrgPickerScreen(a, apiErr.Organizations)
+				return a, a.swapRoot(picker)
+			}
 		}
 	}
 

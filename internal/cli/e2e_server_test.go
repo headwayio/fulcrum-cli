@@ -26,6 +26,7 @@ type fixtureServer struct {
 	// out from under the workspace and produce a real conflict.
 	overrides map[string]string
 	revisions int
+	multiOrg  bool
 }
 
 const fixtureToken = "corpus-token"
@@ -212,6 +213,21 @@ func newFixtureServer() *fixtureServer {
 	})
 
 	authed := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		ambiguous := f.multiOrg
+		f.mu.Unlock()
+		if ambiguous {
+			// What the server sends a token that reaches several orgs.
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			json.NewEncoder(w).Encode(map[string]any{
+				"error": "organization required: pass organization_id",
+				"code":  "organization_required",
+				"organizations": []map[string]any{
+					{"id": 2, "name": "Headway"}, {"id": 21, "name": "Jono"},
+				},
+			})
+			return
+		}
 		if r.Header.Get("Authorization") != "Bearer "+fixtureToken {
 			w.WriteHeader(http.StatusUnauthorized)
 			w.Write(corpusFile("errors", "unauthorized.json"))

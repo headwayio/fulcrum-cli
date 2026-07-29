@@ -46,6 +46,7 @@ type fakeDeps struct {
 	discarded      []string
 	betaStarted    []string
 	betaDropped    []string
+	chosenOrg      string
 }
 
 func (f *fakeDeps) Configured() (bool, error) { return f.configured, nil }
@@ -61,6 +62,13 @@ func (f *fakeDeps) ValidateLogin(url, token, orgID string) (*api.Manifest, error
 func (f *fakeDeps) SaveLogin(url, token, orgID string) (string, error) {
 	f.savedURL, f.savedToken = url, token
 	return "keyring", nil
+}
+
+func (f *fakeDeps) SetOrganization(id string) error {
+	f.chosenOrg = id
+	// A picked organization unblocks whatever the 422 was refusing.
+	f.refreshErr = nil
+	return nil
 }
 
 func (f *fakeDeps) Refresh() (*Snapshot, error) {

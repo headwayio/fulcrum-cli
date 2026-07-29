@@ -58,6 +58,10 @@ them — no harness is left reading yesterday's skills. Only fulcrum's own
 block in `AGENTS.md` is touched; the rest of that file is yours. Narrow it
 with `--target claude|shared|agents|auto` if you want less.
 
+If your token reaches more than one organization, Fulcrum asks which one —
+the TUI shows a picker and remembers the answer; scripted setups set
+`FULCRUM_ORG_ID`.
+
 Then run `fulcrum` with no arguments for the interactive view, or script it:
 `fulcrum status --json` exits 0 when everything is fresh, 1 when anything is
 behind/drifted/conflicted, 2 on network/auth/config errors.

@@ -79,6 +79,9 @@ type Deps interface {
 	ValidateLogin(url, token, orgID string) (*api.Manifest, error)
 	// SaveLogin persists them; returns where the token went.
 	SaveLogin(url, token, orgID string) (string, error)
+	// SetOrganization remembers which organization this token means, for
+	// tokens that reach more than one.
+	SetOrganization(id string) error
 
 	// Refresh fetches the manifest, reconciles proposals, and classifies —
 	// falling back to last-known state when the server is unreachable.
@@ -181,6 +184,25 @@ func (l *Live) SaveLogin(url, token, orgID string) (string, error) {
 	l.Resolved.Token = token
 	l.Resolved.OrganizationID = orgID
 	return where, nil
+}
+
+func (l *Live) SetOrganization(id string) error {
+	dir, err := config.Dir()
+	if err != nil {
+		return err
+	}
+	file, err := config.LoadFile(dir)
+	if err != nil {
+		return err
+	}
+	file.OrganizationID = id
+	if err := file.SaveFile(dir); err != nil {
+		return err
+	}
+	l.Resolved.OrganizationID = id
+	// The cached manifest belonged to no organization at all.
+	l.lastManifest, l.manifestETag = nil, ""
+	return nil
 }
 
 func (l *Live) Refresh() (*Snapshot, error) {

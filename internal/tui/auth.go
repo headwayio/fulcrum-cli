@@ -49,9 +49,17 @@ func (s *authScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 	case loginCheckedMsg:
 		if apiErr, ok := api.AsError(msg.err); ok && apiErr.Code == "organization_required" {
-			s.stage = 2
-			s.notice = "This token belongs to several organizations — pick one:\n" + orgChoices(apiErr)
-			return s, nil
+			// The credentials are fine; they just reach several
+			// organizations. Pick from the list the server named, then
+			// validate again with that answer.
+			url, token := msg.url, msg.token
+			picker := newOrgPickerScreen(s.app, apiErr.Organizations)
+			picker.onChosen = func(orgID string) tea.Cmd {
+				s.orgID.value = orgID
+				s.app.pop()
+				return s.validate(url, token, orgID)
+			}
+			return s, s.app.push(picker)
 		}
 		if msg.err != nil {
 			s.stage = 1
@@ -104,9 +112,15 @@ func (s *authScreen) advance() (screen, tea.Cmd) {
 		}
 	}
 	url, token, orgID := s.url.value, strings.TrimSpace(s.token.value), strings.TrimSpace(s.orgID.value)
+	return s, s.validate(url, token, orgID)
+}
+
+// validate checks credentials with a live manifest fetch — the same step
+// whether they were just typed or an organization was just chosen.
+func (s *authScreen) validate(url, token, orgID string) tea.Cmd {
 	s.stage = 3
 	s.notice = "validating against " + url + "…"
-	return s, func() tea.Msg {
+	return func() tea.Msg {
 		manifest, err := s.app.deps.ValidateLogin(url, token, orgID)
 		return loginCheckedMsg{manifest: manifest, url: url, token: token, orgID: orgID, err: err}
 	}

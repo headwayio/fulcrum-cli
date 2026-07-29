@@ -41,6 +41,10 @@ type Error struct {
 	ServerMessage string
 	RetryAfter    string
 	Body          string
+	// Organizations is populated on the organization_required 422 — the
+	// server names the choices so a client can offer them rather than make
+	// the user go find an id.
+	Organizations []Organization
 }
 
 func (e *Error) Error() string {
@@ -373,12 +377,14 @@ func newError(method, path string, resp *http.Response, body []byte) *Error {
 		Body:       string(body),
 	}
 	var parsed struct {
-		Error string `json:"error"`
-		Code  string `json:"code"`
+		Error         string         `json:"error"`
+		Code          string         `json:"code"`
+		Organizations []Organization `json:"organizations"`
 	}
 	if err := json.Unmarshal(body, &parsed); err == nil {
 		apiErr.Code = parsed.Code
 		apiErr.ServerMessage = parsed.Error
+		apiErr.Organizations = parsed.Organizations
 	}
 	return apiErr
 }

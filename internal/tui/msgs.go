@@ -107,6 +107,12 @@ type discardedMsg struct {
 
 func (m discardedMsg) failure() error { return m.err }
 
+// orgChosenMsg reports the organization choice being persisted.
+type orgChosenMsg struct {
+	name string
+	err  error
+}
+
 // betaChangedMsg reports a local variant started or dropped.
 type betaChangedMsg struct {
 	filename string

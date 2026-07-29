@@ -109,7 +109,10 @@ run:
 //	srv apply <id> | srv reject <id> | srv count <n>
 func cmdSrv(ts *testscript.TestScript, neg bool, args []string) {
 	srv := ts.Value("srv").(*fixtureServer)
-	if len(args) < 2 {
+	if len(args) < 1 {
+		ts.Fatalf("usage: srv apply|reject|count|edit|multiorg|singleorg …")
+	}
+	if args[0] != "multiorg" && args[0] != "singleorg" && len(args) < 2 {
 		ts.Fatalf("usage: srv apply|reject|count <arg>")
 	}
 	switch args[0] {
@@ -124,6 +127,10 @@ func cmdSrv(ts *testscript.TestScript, neg bool, args []string) {
 		if got := srv.proposalCount(); got != want {
 			ts.Fatalf("server has %d proposal(s), want %d", got, want)
 		}
+	case "multiorg", "singleorg":
+		srv.mu.Lock()
+		srv.multiOrg = args[0] == "multiorg"
+		srv.mu.Unlock()
 	case "edit":
 		// srv edit <slug> <find> <replace-with> — a server-side edit that
 		// moves the document's digest, the other half of a conflict.

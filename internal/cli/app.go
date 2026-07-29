@@ -161,6 +161,18 @@ func wrapAPIError(err error) error {
 		return nil
 	}
 	if apiErr, ok := api.AsError(err); ok {
+		// The server's message is API-shaped ("pass organization_id"); a
+		// command-line user needs the command-line answer.
+		if apiErr.Code == "organization_required" {
+			var choices []string
+			for _, org := range apiErr.Organizations {
+				choices = append(choices, fmt.Sprintf("%d (%s)", org.ID, org.Name))
+			}
+			return exitf(ExitError,
+				"your token reaches several organizations — set %s to one of: %s\n"+
+					"       (or run `fulcrum login` and pick one)",
+				config.EnvOrgID, strings.Join(choices, ", "))
+		}
 		return exitf(ExitError, "%v", apiErr)
 	}
 	return exitf(ExitError, "cannot reach the server: %v", err)

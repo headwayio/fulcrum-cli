@@ -22,6 +22,16 @@ grep '"state": "synced"' last-stdout.txt
 env FULCRUM_URL=$SAVED_URL
 fulcrum status
 
+# A token reaching several organizations gets the command-line answer, not
+# the API's "pass organization_id".
+srv multiorg
+fulcrum -code 2 status
+grep 'reaches several organizations' last-stderr.txt
+grep 'FULCRUM_ORG_ID' last-stderr.txt
+grep '2 \(Headway\)' last-stderr.txt
+grep '21 \(Jono\)' last-stderr.txt
+srv singleorg
+
 # No server configured at all: exit 2 with the fix spelled out.
 env FULCRUM_URL=
 fulcrum -code 2 status

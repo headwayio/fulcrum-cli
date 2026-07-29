@@ -1,0 +1,15 @@
+{
+  "documents": {
+    "estimation-rubric": {
+      "filename": "estimation-rubric.md",
+      "remote_digest": "a67ac50d111b51163f4b7cf900eaa1f329bf2620de53cb2a1c5eefc438c2125c",
+      "file_sha256": "49a4f0e2cca1909de849fdaa58b4634c3651b3f55397df9b54156bdbe55e5f28"
+    },
+    "estimation-rubric-source": {
+      "filename": "estimation-rubric.json",
+      "remote_digest": "a67ac50d111b51163f4b7cf900eaa1f329bf2620de53cb2a1c5eefc438c2125c",
+      "file_sha256": "12ce3ce872bb1043541ee9961d3d1ee1eb0bdc2d09fba7dc0827b2a926d1f1a7"
+    }
+  },
+  "proposals": []
+}

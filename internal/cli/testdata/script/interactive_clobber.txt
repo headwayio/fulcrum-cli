@@ -1,0 +1,25 @@
+# Interactive sync prompts before clobbering local edits — the Ruby client
+# silently destroyed them. Declining keeps the edits (exit 1: the sync is
+# incomplete); accepting overwrites.
+
+env FULCRUM_FORCE_TTY=1
+fulcrum sync
+cp edited.json skills/estimation-rubric.json
+
+fulcrum -code 1 -in decline.txt sync
+grep 'overwrite' last-stdout.txt
+grep 'kept your local edits' last-stdout.txt
+cmp skills/estimation-rubric.json edited.json
+
+fulcrum -in accept.txt sync
+cmp skills/estimation-rubric.json $CORPUS/documents/estimation-rubric.json
+
+-- edited.json --
+{
+  "rubric_id": "org-default",
+  "status": "edited-locally"
+}
+-- decline.txt --
+n
+-- accept.txt --
+y

@@ -39,7 +39,7 @@ func TestClassifyMatrix(t *testing.T) {
 
 	// Proposal dedupe is by exact (slug, file_sha256): the submitted bytes
 	// classify as proposed and BEAT conflicted even when remote moved.
-	s.RecordProposal("x", 7, hexSHA256([]byte("edited")))
+	s.RecordProposal("x", 7, HexSHA256([]byte("edited")))
 	if got := s.Classify("x", []byte("edited"), "d1"); got != Proposed {
 		t.Errorf("submitted edits = %q, want proposed", got)
 	}
@@ -112,6 +112,39 @@ func TestNewStateCarriesVersion(t *testing.T) {
 	}
 	if reloaded.FileVersion != Version {
 		t.Errorf("reloaded version = %d, want %d", reloaded.FileVersion, Version)
+	}
+}
+
+// Reconciling a proposal to a terminal status releases the proposed pin —
+// the doc falls back to the ordinary chain (drifted/conflicted/behind).
+func TestResolvedProposalStopsPinning(t *testing.T) {
+	s := New()
+	s.RecordSync("x", "x.json", "d1", []byte("a"))
+	s.RecordProposal("x", 7, HexSHA256([]byte("edited")))
+
+	if got := s.Classify("x", []byte("edited"), "d1"); got != Proposed {
+		t.Fatalf("pending proposal = %q, want proposed", got)
+	}
+
+	if !s.AnnotateProposal(7, "applied") {
+		t.Fatal("annotation must report the change")
+	}
+	if s.AnnotateProposal(7, "applied") {
+		t.Error("re-annotating the same status must be a no-op")
+	}
+	if got := s.Classify("x", []byte("edited"), "d1"); got != Drifted {
+		t.Errorf("applied proposal, remote unchanged = %q, want drifted", got)
+	}
+	if got := s.Classify("x", []byte("edited"), "d2"); got != Conflicted {
+		t.Errorf("applied proposal, remote moved = %q, want conflicted", got)
+	}
+
+	resolved := s.ResolvedProposalFor("x", HexSHA256([]byte("edited")))
+	if resolved == nil || resolved.Status != "applied" {
+		t.Errorf("resolved lookup = %+v", resolved)
+	}
+	if s.ResolvedProposalFor("x", HexSHA256([]byte("other"))) != nil {
+		t.Error("resolved lookup must match exact bytes")
 	}
 }
 

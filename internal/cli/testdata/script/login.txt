@@ -1,0 +1,29 @@
+# login validates live, echoes the org and user, stores the URL in
+# config.json and the token in a 0600 file with --no-keychain — and the
+# stored credentials power later calls with the env empty.
+
+env FULCRUM_API_TOKEN=
+env FULCRUM_URL=
+
+fulcrum -in login-input.txt login --no-keychain
+grep 'settings/developer' last-stdout.txt
+grep 'Connected to Corpus Primary Organization' last-stdout.txt
+grep 'developer@corpus.usefulcrum.test' last-stdout.txt
+grep 'token in file' last-stdout.txt
+grep '"url"' config/config.json
+! grep 'corpus-token' config/config.json
+exists config/token
+
+fulcrum projects
+grep 'Fulcrum Dogfood' last-stdout.txt
+
+# A wrong token never gets stored: validation fails first.
+fulcrum -code 2 -in bad-login-input.txt login --no-keychain
+grep 'unauthorized' last-stderr.txt
+
+-- login-input.txt --
+$SRV_URL
+corpus-token
+-- bad-login-input.txt --
+$SRV_URL
+not-the-token

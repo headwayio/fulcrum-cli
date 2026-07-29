@@ -1,0 +1,22 @@
+# The automation contract: on non-TTY stdin sync never prompts and never
+# clobbers — drifted docs are skipped, reported on stderr, exit 1. --force
+# overwrites without asking.
+
+fulcrum sync
+cp edited.json skills/estimation-rubric.json
+
+fulcrum -code 1 sync
+grep 'skipped estimation-rubric.json' last-stderr.txt
+grep 'skipped to protect local edits' last-stderr.txt
+cmp skills/estimation-rubric.json edited.json
+
+fulcrum sync --force
+cmp skills/estimation-rubric.json $CORPUS/documents/estimation-rubric.json
+fulcrum status
+grep 'synced' last-stdout.txt
+
+-- edited.json --
+{
+  "rubric_id": "org-default",
+  "status": "edited-locally"
+}

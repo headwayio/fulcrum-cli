@@ -1,0 +1,49 @@
+# projects lists what push-facts targets; --project takes an id or an
+# unambiguous name; ambiguous and unknown names exit 2 naming candidates;
+# declining exits 0 (the Ruby client crashed here); the FULL payload is
+# always shown before anything is sent.
+
+fulcrum projects
+grep 'Fulcrum Dogfood' last-stdout.txt
+grep 'Acme App' last-stdout.txt
+fulcrum projects --json
+grep '"client_name": "Headway"' last-stdout.txt
+
+fulcrum push-facts --project 2 --dry-run $WORK/repo
+grep '"dependencies"' last-stdout.txt
+grep 'rails' last-stdout.txt
+grep 'nothing else leaves this machine' last-stdout.txt
+grep 'Dry run: nothing pushed' last-stdout.txt
+
+fulcrum -in decline.txt push-facts --project 2 $WORK/repo
+grep 'Nothing pushed' last-stdout.txt
+
+fulcrum -in accept.txt push-facts --project 2 $WORK/repo
+grep 'the next estimate for project 2 sees these facts' last-stdout.txt
+
+# Case-insensitive unambiguous name match resolves.
+fulcrum -in accept.txt push-facts --project dogfood $WORK/repo
+grep 'Push to project 2' last-stdout.txt
+
+# Ambiguous name: exit 2, candidates listed, nothing pushed.
+fulcrum -code 2 push-facts --project fulcrum $WORK/repo
+grep 'ambiguous' last-stderr.txt
+grep 'Fulcrum Dogfood' last-stderr.txt
+grep 'Fulcrum Website' last-stderr.txt
+
+# Unknown name: exit 2.
+fulcrum -code 2 push-facts --project nonesuch $WORK/repo
+grep 'no project matches' last-stderr.txt
+
+-- repo/app.rb --
+class X
+end
+-- repo/Gemfile --
+gem "rails"
+gem 'pg'
+-- repo/package.json --
+{"dependencies": {"stimulus": "^3"}}
+-- decline.txt --
+n
+-- accept.txt --
+y

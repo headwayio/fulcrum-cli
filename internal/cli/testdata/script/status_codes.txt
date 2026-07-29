@@ -1,0 +1,28 @@
+# The exit-code taxonomy: staleness and unreachability are never conflated.
+# 0 = fresh, 1 = stale, 2 = network/auth/config — pinned per case.
+
+fulcrum sync
+fulcrum status
+
+# Bad auth is a config problem: exit 2, never offline mode.
+env FULCRUM_API_TOKEN=wrong
+fulcrum -code 2 status
+grep 'unauthorized' last-stderr.txt
+env FULCRUM_API_TOKEN=corpus-token
+
+# Unreachable server: exit 2, last-known rows still render, reachable=false.
+env SAVED_URL=$FULCRUM_URL
+env FULCRUM_URL=http://127.0.0.1:1
+fulcrum -code 2 status
+grep 'offline' last-stderr.txt
+grep 'synced' last-stdout.txt
+fulcrum -code 2 status --json
+grep '"reachable": false' last-stdout.txt
+grep '"state": "synced"' last-stdout.txt
+env FULCRUM_URL=$SAVED_URL
+fulcrum status
+
+# No server configured at all: exit 2 with the fix spelled out.
+env FULCRUM_URL=
+fulcrum -code 2 status
+grep 'no server configured' last-stderr.txt

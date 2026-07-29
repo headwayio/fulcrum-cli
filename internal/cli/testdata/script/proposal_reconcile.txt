@@ -1,0 +1,44 @@
+# Proposal outcomes reconcile from the index: the Ruby client showed
+# :proposed forever; here applied/rejected release the pin and the status
+# line names the outcome.
+
+fulcrum sync
+cp edited.json skills/estimation-rubric.json
+
+# --yes needs --note: the reviewer note is required.
+fulcrum -code 2 publish --yes
+grep 'needs --note' last-stderr.txt
+
+fulcrum publish --yes --note automated
+grep 'Proposal #101 submitted' last-stdout.txt
+fulcrum status
+grep 'proposed' last-stdout.txt
+
+srv apply 101
+fulcrum -code 1 status
+grep 'proposal #101 accepted' last-stdout.txt
+grep '"status": "applied"' skills/.fulcrum-sync.json
+
+fulcrum sync --force
+fulcrum status
+grep 'synced' last-stdout.txt
+
+# Rejected: the outcome is named and the local edits remain.
+cp edited2.json skills/estimation-rubric.json
+fulcrum publish --yes --note second-try
+grep 'Proposal #102 submitted' last-stdout.txt
+srv reject 102
+fulcrum -code 1 status
+grep 'proposal #102 declined' last-stdout.txt
+cmp skills/estimation-rubric.json edited2.json
+
+-- edited.json --
+{
+  "rubric_id": "org-default",
+  "status": "edited-locally"
+}
+-- edited2.json --
+{
+  "rubric_id": "org-default",
+  "status": "edited-again"
+}

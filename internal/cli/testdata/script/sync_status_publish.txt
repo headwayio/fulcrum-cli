@@ -1,0 +1,62 @@
+# Golden path: sync pulls verbatim bytes and records both digests; status
+# classifies; publish is explicit, noted, deduped, and refuses broken JSON.
+
+fulcrum sync
+grep 'synced estimation-rubric.json' last-stdout.txt
+grep 'synced estimation-rubric.md' last-stdout.txt
+cmp skills/estimation-rubric.json $CORPUS/documents/estimation-rubric.json
+cmp skills/estimation-rubric.md $CORPUS/documents/estimation-rubric.md
+grep 'remote_digest' skills/.fulcrum-sync.json
+grep '"version": 1' skills/.fulcrum-sync.json
+
+fulcrum status
+grep 'synced' last-stdout.txt
+! grep 'drifted' last-stdout.txt
+
+fulcrum cat estimation-rubric
+cmp last-stdout.txt $CORPUS/documents/estimation-rubric.md
+
+fulcrum version
+grep 'fulcrum test' last-stdout.txt
+
+# Local edit flips the row to drifted and the exit code to 1.
+cp edited.json skills/estimation-rubric.json
+fulcrum -code 1 status
+grep 'drifted' last-stdout.txt
+
+# Declining sends nothing — and exits 0.
+fulcrum -in decline.txt publish
+grep 'Nothing published' last-stdout.txt
+srv count 0
+
+# Confirm + note submits, with the last-sync digest as the base.
+fulcrum -in confirm.txt publish
+grep 'Proposal #101 submitted' last-stdout.txt
+srv count 1
+grep '"id": 101' skills/.fulcrum-sync.json
+
+# Submitted bytes classify as proposed (fresh), and a second publish no-ops.
+fulcrum status
+grep 'proposed' last-stdout.txt
+fulcrum -in confirm.txt publish
+grep 'Nothing published' last-stdout.txt
+srv count 1
+
+# Invalid JSON is refused per document; nothing submitted.
+cp broken.json skills/estimation-rubric.json
+fulcrum -in confirm.txt publish
+grep 'not valid JSON, nothing submitted' last-stdout.txt
+srv count 1
+
+-- edited.json --
+{
+  "rubric_id": "org-default",
+  "status": "edited-locally"
+}
+-- broken.json --
+{ broken
+-- decline.txt --
+n
+-- confirm.txt --
+y
+Widened per client call

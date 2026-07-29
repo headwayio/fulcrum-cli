@@ -126,7 +126,7 @@ func (s *SyncState) RecordSync(slug, filename, remoteDigest string, body []byte)
 	s.Documents[slug] = &Document{
 		Filename:     filename,
 		RemoteDigest: remoteDigest,
-		FileSHA256:   hexSHA256(body),
+		FileSHA256:   HexSHA256(body),
 	}
 }
 
@@ -155,7 +155,7 @@ func (s *SyncState) Classify(slug string, localBody []byte, remoteDigest string)
 		return Missing
 	}
 
-	localSHA := hexSHA256(localBody)
+	localSHA := HexSHA256(localBody)
 	localChanged := localSHA != recorded.FileSHA256
 	remoteMoved := remoteDigest != recorded.RemoteDigest
 
@@ -173,17 +173,49 @@ func (s *SyncState) Classify(slug string, localBody []byte, remoteDigest string)
 	}
 }
 
-// proposed mirrors Ruby proposed?: dedupe by exact (slug, file_sha256).
+// proposed mirrors Ruby proposed?: dedupe by exact (slug, file_sha256). One
+// additive difference: proposals reconciled to a resolved status no longer
+// pin the doc as proposed — the Ruby client shows :proposed forever because
+// its API was create-only.
 func (s *SyncState) proposed(slug, fileSHA256 string) bool {
 	for _, p := range s.Proposals {
-		if p.Slug == slug && p.FileSHA256 == fileSHA256 {
+		if p.Slug == slug && p.FileSHA256 == fileSHA256 && !p.Resolved() {
 			return true
 		}
 	}
 	return false
 }
 
-func hexSHA256(body []byte) string {
+// Resolved reports whether the proposal's reconciled status is terminal.
+func (p *Proposal) Resolved() bool {
+	return p.Status == "applied" || p.Status == "rejected"
+}
+
+// ResolvedProposalFor returns the terminal proposal matching the local
+// bytes, if any — status output names the outcome instead of a bare drift.
+func (s *SyncState) ResolvedProposalFor(slug, fileSHA256 string) *Proposal {
+	for _, p := range s.Proposals {
+		if p.Slug == slug && p.FileSHA256 == fileSHA256 && p.Resolved() {
+			return p
+		}
+	}
+	return nil
+}
+
+// AnnotateProposal records the reconciled status for a proposal id (from the
+// proposals index). Returns true when something changed.
+func (s *SyncState) AnnotateProposal(id int64, status string) bool {
+	for _, p := range s.Proposals {
+		if p.ID == id && p.Status != status {
+			p.Status = status
+			return true
+		}
+	}
+	return false
+}
+
+// HexSHA256 is the digest both clients use for local file identity.
+func HexSHA256(body []byte) string {
 	sum := sha256.Sum256(body)
 	return hex.EncodeToString(sum[:])
 }

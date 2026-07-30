@@ -1,0 +1,210 @@
+[
+  {
+    "name": "gapped",
+    "scale": [
+      {
+        "label": "S",
+        "points": 1,
+        "hours": 4.0
+      },
+      {
+        "label": "M",
+        "points": 3,
+        "hours": 16.0
+      },
+      {
+        "label": "L",
+        "points": 5,
+        "hours": 40.0
+      }
+    ],
+    "cases": [
+      {
+        "hours": 3.0,
+        "label": "S"
+      },
+      {
+        "hours": 4.0,
+        "label": "S"
+      },
+      {
+        "hours": 9.5,
+        "label": "S"
+      },
+      {
+        "hours": 10.0,
+        "label": "M"
+      },
+      {
+        "hours": 10.5,
+        "label": "M"
+      },
+      {
+        "hours": 16.0,
+        "label": "M"
+      },
+      {
+        "hours": 27.5,
+        "label": "M"
+      },
+      {
+        "hours": 28.0,
+        "label": "L"
+      },
+      {
+        "hours": 28.5,
+        "label": "L"
+      },
+      {
+        "hours": 40.0,
+        "label": "L"
+      },
+      {
+        "hours": 41.0,
+        "label": "L"
+      }
+    ]
+  },
+  {
+    "name": "stringly-stored",
+    "scale": [
+      {
+        "label": "1",
+        "points": 1,
+        "hours": 1.0
+      },
+      {
+        "label": "2",
+        "points": 2,
+        "hours": 2.0
+      },
+      {
+        "label": "3",
+        "points": 3,
+        "hours": 5.0
+      },
+      {
+        "label": "5",
+        "points": 5,
+        "hours": 10.0
+      },
+      {
+        "label": "8",
+        "points": 8,
+        "hours": 15.0
+      },
+      {
+        "label": "13",
+        "points": 13,
+        "hours": 20.0
+      },
+      {
+        "label": "21",
+        "points": 21,
+        "hours": 25.0
+      }
+    ],
+    "cases": [
+      {
+        "hours": 0.5,
+        "label": "1"
+      },
+      {
+        "hours": 1.0,
+        "label": "1"
+      },
+      {
+        "hours": 1.5,
+        "label": "2"
+      },
+      {
+        "hours": 2.0,
+        "label": "2"
+      },
+      {
+        "hours": 3.0,
+        "label": "2"
+      },
+      {
+        "hours": 3.5,
+        "label": "3"
+      },
+      {
+        "hours": 4.0,
+        "label": "3"
+      },
+      {
+        "hours": 5.0,
+        "label": "3"
+      },
+      {
+        "hours": 7.0,
+        "label": "3"
+      },
+      {
+        "hours": 7.5,
+        "label": "5"
+      },
+      {
+        "hours": 8.0,
+        "label": "5"
+      },
+      {
+        "hours": 10.0,
+        "label": "5"
+      },
+      {
+        "hours": 12.0,
+        "label": "5"
+      },
+      {
+        "hours": 12.5,
+        "label": "8"
+      },
+      {
+        "hours": 13.0,
+        "label": "8"
+      },
+      {
+        "hours": 15.0,
+        "label": "8"
+      },
+      {
+        "hours": 17.0,
+        "label": "8"
+      },
+      {
+        "hours": 17.5,
+        "label": "13"
+      },
+      {
+        "hours": 18.0,
+        "label": "13"
+      },
+      {
+        "hours": 20.0,
+        "label": "13"
+      },
+      {
+        "hours": 22.0,
+        "label": "13"
+      },
+      {
+        "hours": 22.5,
+        "label": "21"
+      },
+      {
+        "hours": 23.0,
+        "label": "21"
+      },
+      {
+        "hours": 25.0,
+        "label": "21"
+      },
+      {
+        "hours": 26.0,
+        "label": "21"
+      }
+    ]
+  }
+]

@@ -37,16 +37,24 @@ type Facts struct {
 	Languages     map[string]int
 	LanguageOrder []string
 	Dependencies  []string
-	Repository    string
+	// Usage maps a declared dependency to the number of source files that
+	// reference it. Absent for dependencies nothing imports.
+	Usage      map[string]int
+	Repository string
 }
 
-// Payload is the wire shape push-facts sends (languages + dependencies only,
-// like the Ruby client's slice).
+// Payload is the wire shape push-facts sends.
 func (f *Facts) Payload() map[string]any {
-	return map[string]any{
+	payload := map[string]any{
 		"languages":    f.Languages,
 		"dependencies": f.Dependencies,
 	}
+	// Omitted entirely when nothing was matched, so the server keeps
+	// rendering exactly as before rather than showing an empty section.
+	if len(f.Usage) > 0 {
+		payload["usage"] = f.Usage
+	}
+	return payload
 }
 
 // Collect walks dir like the Ruby client's Dir.glob(FNM_DOTMATCH) walk.
@@ -83,10 +91,12 @@ func Collect(dir string) (*Facts, error) {
 		return nil, err
 	}
 
+	declared := dependencies(abs)
 	return &Facts{
 		Languages:     counts,
 		LanguageOrder: orderByCount(counts),
-		Dependencies:  dependencies(abs),
+		Dependencies:  declared,
+		Usage:         countUsage(abs, declared),
 		Repository:    filepath.Base(abs),
 	}, nil
 }

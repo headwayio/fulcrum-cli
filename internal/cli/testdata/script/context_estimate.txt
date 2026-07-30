@@ -1,0 +1,201 @@
+# Local estimating: pull a project's context, then derive committed values
+# from a draft the estimation skill produced.
+
+# The context lands in .fulcrum/ and is kept out of version control — it
+# carries a project's priced backlog, which must not reach every clone.
+fulcrum context --project 'Acme App' --dir $WORK
+grep 'wrote .fulcrum/project-context.md' last-stdout.txt
+grep 'wrote .fulcrum/snapping.json \(5 snapping cases\)' last-stdout.txt
+grep 'added .fulcrum/ to .gitignore' last-stdout.txt
+exists .fulcrum/project-context.md
+exists .fulcrum/snapping.json
+grep '^\.fulcrum/$' .gitignore
+
+# Re-running does not duplicate the gitignore entry.
+fulcrum context --project 'Acme App' --dir $WORK
+! grep 'added .fulcrum/ to .gitignore' last-stdout.txt
+
+# A draft is validated against the estimate contract, then the committed
+# value is DERIVED — (8 + 4*16 + 40) / 6 = 18.67, which snaps up to M.
+fulcrum -in draft.json estimate --dir $WORK
+grep 'Swap react-datatables for react-drag-n-drop' last-stdout.txt
+grep 'Development.*M.*\(8–40, medium\)' last-stdout.txt
+grep 'expected 18.7h' last-stdout.txt
+
+# Same answer from a file argument as from stdin.
+fulcrum estimate --dir $WORK $WORK/draft.json
+grep 'expected 18.7h' last-stdout.txt
+
+# A draft still wrapped in the model's fence is accepted, so output can be
+# pasted straight out of an agent.
+fulcrum estimate --dir $WORK $WORK/fenced.json
+grep 'expected 18.7h' last-stdout.txt
+
+# A contract violation names what is wrong and refuses, exit 2.
+fulcrum -code 2 estimate --dir $WORK $WORK/broken.json
+grep 'does not satisfy the estimate contract' last-stderr.txt
+grep 'low \(20\) must not exceed likely \(16\)' last-stderr.txt
+
+# An exclusion with no reason is a coverage violation: the rubric requires
+# that silence is never read as absence of work.
+fulcrum -code 2 estimate --dir $WORK $WORK/unreasoned.json
+grep 'excluded without a reason' last-stderr.txt
+
+# Estimating with no synced context refuses rather than guessing a scale.
+rm .fulcrum/snapping.json
+fulcrum -code 2 estimate --dir $WORK $WORK/draft.json
+grep 'run `fulcrum context --project <ref>` first' last-stderr.txt
+
+# An unknown project is refused before any request is made — resolveProject
+# lists what exists, so the fix is named rather than round-tripped.
+fulcrum -code 2 context --project 99 --dir $WORK
+grep 'no project with id 99' last-stderr.txt
+
+# An ambiguous name is refused with the candidates, never a guess.
+fulcrum -code 2 context --project fulcrum --dir $WORK
+grep 'ambiguous' last-stderr.txt
+
+# Pushing a draft up: the full payload is shown first, and declining is safe.
+fulcrum -in decline.txt feature push --project 'Acme App' $WORK/draft.json
+grep '1 feature\(s\) to append' last-stdout.txt
+grep 'Development: 8–16–40 \(medium\)' last-stdout.txt
+grep 'Committed hours are derived server-side' last-stdout.txt
+grep 'Nothing pushed' last-stdout.txt
+
+# Accepting appends and reports what the server committed.
+fulcrum -in accept.txt feature push --project 'Acme App' $WORK/draft.json
+grep 'created Swap react-datatables' last-stdout.txt
+grep 'Development: M \(16h committed\)' last-stdout.txt
+grep 'Review in Fulcrum' last-stdout.txt
+
+# --dry-run never contacts the server at all.
+fulcrum feature push --project 'Acme App' --dry-run $WORK/draft.json
+grep 'Dry run: nothing pushed' last-stdout.txt
+
+# A draft that would modify or destroy existing work is refused client-side,
+# before any request is made.
+fulcrum -code 2 feature push --project 'Acme App' --yes $WORK/replace.json
+grep 'only the add action can be pushed' last-stderr.txt
+
+# A contract violation is caught here rather than round-tripped.
+fulcrum -code 2 feature push --project 'Acme App' --yes $WORK/broken.json
+grep 'does not satisfy the estimate contract' last-stderr.txt
+
+-- draft.json --
+{
+  "action": "add",
+  "features": [{
+    "id": "dnd-swap",
+    "name": "Swap react-datatables for react-drag-n-drop",
+    "description": "<p>Replace the table library across 23 call sites.</p>",
+    "moscow_priority": "should_have",
+    "estimates": [{
+      "role": "Development",
+      "estimate": {
+        "low": 8, "likely": 16, "high": 40,
+        "confidence": "medium",
+        "components_included": ["frontend", "testing"],
+        "components_excluded": [{"component": "data_migrations", "reason": "No schema change"}],
+        "assumptions": [], "exclusions": [], "unknowns": [], "dependencies": [], "risks": [],
+        "reuse_or_modification": "modify-existing",
+        "rationale": "23 call sites, 4 with custom renderers, none covered by tests"
+      }
+    }]
+  }]
+}
+-- fenced.json --
+Here is what that change looks like.
+
+```features-json
+{
+  "action": "add",
+  "features": [{
+    "id": "dnd-swap",
+    "name": "Swap react-datatables for react-drag-n-drop",
+    "description": "<p>Replace the table library across 23 call sites.</p>",
+    "moscow_priority": "should_have",
+    "estimates": [{
+      "role": "Development",
+      "estimate": {
+        "low": 8, "likely": 16, "high": 40,
+        "confidence": "medium",
+        "components_included": ["frontend", "testing"],
+        "components_excluded": [],
+        "assumptions": [], "exclusions": [], "unknowns": [], "dependencies": [], "risks": [],
+        "reuse_or_modification": "modify-existing",
+        "rationale": "23 call sites, 4 with custom renderers, none covered by tests"
+      }
+    }]
+  }]
+}
+```
+-- broken.json --
+{
+  "action": "add",
+  "features": [{
+    "id": "dnd-swap",
+    "name": "Swap react-datatables for react-drag-n-drop",
+    "description": "<p>Replace the table library.</p>",
+    "moscow_priority": "should_have",
+    "estimates": [{
+      "role": "Development",
+      "estimate": {
+        "low": 20, "likely": 16, "high": 40,
+        "confidence": "medium",
+        "components_included": ["frontend"],
+        "components_excluded": [],
+        "assumptions": [], "exclusions": [], "unknowns": [], "dependencies": [], "risks": [],
+        "reuse_or_modification": "modify-existing",
+        "rationale": "Reasoned"
+      }
+    }]
+  }]
+}
+-- unreasoned.json --
+{
+  "action": "add",
+  "features": [{
+    "id": "dnd-swap",
+    "name": "Swap react-datatables for react-drag-n-drop",
+    "description": "<p>Replace the table library.</p>",
+    "moscow_priority": "should_have",
+    "estimates": [{
+      "role": "Development",
+      "estimate": {
+        "low": 8, "likely": 16, "high": 40,
+        "confidence": "medium",
+        "components_included": ["frontend"],
+        "components_excluded": [{"component": "accessibility", "reason": ""}],
+        "assumptions": [], "exclusions": [], "unknowns": [], "dependencies": [], "risks": [],
+        "reuse_or_modification": "modify-existing",
+        "rationale": "Reasoned"
+      }
+    }]
+  }]
+}
+-- accept.txt --
+y
+-- decline.txt --
+n
+-- replace.json --
+{
+  "action": "replace",
+  "features": [{
+    "id": "dnd-swap",
+    "name": "Swap react-datatables for react-drag-n-drop",
+    "description": "<p>Replace the table library.</p>",
+    "moscow_priority": "should_have",
+    "estimates": [{
+      "role": "Development",
+      "estimate": {
+        "low": 8, "likely": 16, "high": 40,
+        "confidence": "medium",
+        "components_included": ["frontend"],
+        "components_excluded": [],
+        "assumptions": [], "exclusions": [], "unknowns": [], "dependencies": [], "risks": [],
+        "reuse_or_modification": "modify-existing",
+        "rationale": "Reasoned"
+      }
+    }]
+  }]
+}

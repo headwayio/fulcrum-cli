@@ -196,6 +196,78 @@ func newFixtureServer() *fixtureServer {
 		}})
 	})
 
+	mux.HandleFunc("GET /api/agent_context/projects/{id}/context", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if id < 1 || id > 3 {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			w.Write(corpusFile("errors", "unknown_project.json"))
+			return
+		}
+		// A gapped scale, so a midpoint case is present and the client's
+		// round-up rule is actually exercised by `fulcrum context`.
+		scale := []map[string]any{
+			{"label": "S", "points": 1, "hours": 4.0},
+			{"label": "M", "points": 3, "hours": 16.0},
+			{"label": "L", "points": 5, "hours": 40.0},
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"project":  map[string]any{"id": id, "name": "Acme App"},
+			"digest":   "abc123def4567890abc123def4567890abc123def4567890abc123def4567890",
+			"filename": fmt.Sprintf("project-%d-context.md", id),
+			"format":   "markdown",
+			"body":     "---\nname: project-context\n---\n\n## Estimation Rubric\n\nEstimate each feature per role.\n",
+			"snapping_fixtures": map[string]any{
+				"scale":            scale,
+				"expected_formula": "(low + 4 * likely + high) / 6",
+				"rule":             "Nearest label by hours; an exact midpoint rounds UP.",
+				"cases": []map[string]any{
+					{"hours": 4.0, "label": "S"},
+					{"hours": 10.0, "label": "M"},
+					{"hours": 16.0, "label": "M"},
+					{"hours": 28.0, "label": "L"},
+					{"hours": 40.0, "label": "L"},
+				},
+			},
+		})
+	})
+
+	mux.HandleFunc("POST /api/agent_context/projects/{id}/features", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		var payload struct {
+			ActionName string           `json:"action_name"`
+			Features   []map[string]any `json:"features"`
+		}
+		json.NewDecoder(r.Body).Decode(&payload)
+		if id < 1 || id > 3 {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			w.Write(corpusFile("errors", "unknown_project.json"))
+			return
+		}
+		if payload.ActionName != "add" {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			json.NewEncoder(w).Encode(map[string]any{
+				"error": "only the add action can be pushed", "code": "unsupported_action",
+			})
+			return
+		}
+		created := make([]map[string]any, 0, len(payload.Features))
+		for _, feature := range payload.Features {
+			created = append(created, map[string]any{
+				"id": 42, "ai_feature_id": feature["id"], "name": feature["name"],
+				"moscow_priority": feature["moscow_priority"], "release": nil,
+				// 18.67 snapped to M, as the server derives it.
+				"estimates": []map[string]any{
+					{"role": "Development", "complexity": "M", "hours": 16.0},
+				},
+			})
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{
+			"project_id": id, "created": created, "skipped": []any{}, "dropped": []any{},
+			"review_url": "https://fulcrum.test/projects/" + r.PathValue("id"),
+		})
+	})
+
 	mux.HandleFunc("POST /api/agent_context/architecture", func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			ProjectID int64          `json:"project_id"`

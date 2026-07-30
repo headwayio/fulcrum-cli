@@ -125,6 +125,9 @@ func Into(w *workspace.Workspace, projectDir string, targets []string, out, prob
 		})
 	}
 
+	// The client's own skills ride along, so a developer who has synced
+	// nothing still gets the one that drives this binary.
+	skills = withBuiltins(skills)
 	if len(skills) == 0 {
 		return 0, nil
 	}

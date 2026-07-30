@@ -1,0 +1,31 @@
+# The estimating skill ships with the client, not with the organization's
+# knowledge: it describes how to drive THIS binary, so versioning it with the
+# commands it invokes is the only way the two cannot disagree.
+
+mkdir $WORK/proj
+
+# It installs even into a workspace that has synced nothing at all.
+fulcrum skills install $WORK/proj
+grep 'installed estimating-with-fulcrum' last-stdout.txt
+
+# It reaches every harness a project might drive — Claude Code, the
+# vendor-neutral SKILL.md directory, and the AGENTS.md managed block.
+exists proj/.claude/skills/estimating-with-fulcrum/SKILL.md
+exists proj/.skills/estimating-with-fulcrum/SKILL.md
+grep 'estimating-with-fulcrum' proj/AGENTS.md
+
+# It carries the rules that keep a local estimate honest.
+grep 'Never compute the committed hours yourself' proj/.claude/skills/estimating-with-fulcrum/SKILL.md
+grep 'Never emit an `hours` field' proj/.claude/skills/estimating-with-fulcrum/SKILL.md
+grep 'fulcrum context --project' proj/.claude/skills/estimating-with-fulcrum/SKILL.md
+
+# And it is pinned like any other installed skill.
+grep 'estimating-with-fulcrum' proj/.fulcrum/.fulcrum-installed.json
+
+# A sync alongside it installs both, and neither displaces the other.
+fulcrum sync
+fulcrum skills install $WORK/proj
+grep 'installed corpus-writing-specs' last-stdout.txt
+grep 'installed estimating-with-fulcrum' last-stdout.txt
+exists proj/.claude/skills/corpus-writing-specs/SKILL.md
+exists proj/.claude/skills/estimating-with-fulcrum/SKILL.md

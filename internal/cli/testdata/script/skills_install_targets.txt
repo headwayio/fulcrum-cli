@@ -31,7 +31,8 @@ grep -count=1 '### corpus-writing-specs' proj2/AGENTS.md
 # format — no harness is left reading yesterday's skills.
 srv edit skill-corpus-writing-specs 'Name the behavior, not the implementation.' 'Rewritten upstream.'
 fulcrum sync
-grep 'refreshed 1 skill' last-stdout.txt
+# 2 = the org's synced skill plus the client's own built-in estimating skill.
+grep 'refreshed 2 skill' last-stdout.txt
 grep 'Rewritten upstream.' proj/.claude/skills/corpus-writing-specs/SKILL.md
 grep 'Rewritten upstream.' proj/.skills/corpus-writing-specs/SKILL.md
 grep 'Rewritten upstream.' proj/AGENTS.md

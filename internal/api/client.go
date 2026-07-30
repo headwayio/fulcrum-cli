@@ -160,12 +160,74 @@ type Project struct {
 	ArchitectureCollectedAt *string `json:"architecture_collected_at"`
 }
 
+// ProjectContext is the GET /projects/:id/context response: the estimation
+// bundle plus the snapping table a local estimate must reproduce exactly.
+type ProjectContext struct {
+	Project struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	} `json:"project"`
+	Digest   string   `json:"digest"`
+	Filename string   `json:"filename"`
+	Format   string   `json:"format"`
+	Body     string   `json:"body"`
+	Fixtures Snapping `json:"snapping_fixtures"`
+}
+
+// Snapping is the server's own derivation and snapping rule, published so a
+// client implementation can be pinned against it rather than described in
+// prose and left to drift.
+type Snapping struct {
+	Scale           []ScaleStep    `json:"scale"`
+	ExpectedFormula string         `json:"expected_formula"`
+	Rule            string         `json:"rule"`
+	Cases           []SnappingCase `json:"cases"`
+}
+
+// ScaleStep is one step of the project's complexity scale.
+type ScaleStep struct {
+	Label  string  `json:"label"`
+	Points int     `json:"points"`
+	Hours  float64 `json:"hours"`
+}
+
+// SnappingCase is one generated (hours -> label) expectation.
+type SnappingCase struct {
+	Hours float64 `json:"hours"`
+	Label string  `json:"label"`
+}
+
 // ProposalReceipt is the POST /proposals response.
 type ProposalReceipt struct {
 	ID             int64  `json:"id"`
 	Status         string `json:"status"`
 	BasedOnCurrent bool   `json:"based_on_current"`
 	ReviewURL      string `json:"review_url"`
+}
+
+// FeaturePushReceipt is the POST /projects/:id/features response.
+type FeaturePushReceipt struct {
+	ProjectID int64 `json:"project_id"`
+	Created   []struct {
+		ID             int64  `json:"id"`
+		AIFeatureID    string `json:"ai_feature_id"`
+		Name           string `json:"name"`
+		MoscowPriority string `json:"moscow_priority"`
+		Release        string `json:"release"`
+		Estimates      []struct {
+			Role       string  `json:"role"`
+			Complexity string  `json:"complexity"`
+			Hours      float64 `json:"hours"`
+		} `json:"estimates"`
+	} `json:"created"`
+	Skipped []struct {
+		Name   string `json:"name"`
+		Reason string `json:"reason"`
+	} `json:"skipped"`
+	// Dropped names estimates the organization's rubric contract rejected.
+	// The server drops and reports them; it never repairs them.
+	Dropped   []string `json:"dropped"`
+	ReviewURL string   `json:"review_url"`
 }
 
 // ArchitectureReceipt is the POST /architecture response.
@@ -258,6 +320,41 @@ func (c *Client) CreateSkillDraft(ctx context.Context, name string) (*SkillDraft
 		return nil, err
 	}
 	return draft, nil
+}
+
+// ProjectContext fetches the project's estimation context bundle: the
+// org-invariant prompt slice (rate-free), the project's complexity scale and
+// releases, and the inventory of already-priced features an agent estimates
+// against. Deliberately not part of the manifest — see the server's
+// Api::ProjectContextsController for why one developer does not sync every
+// project's priced backlog.
+func (c *Client) ProjectContext(ctx context.Context, projectID int64) (*ProjectContext, error) {
+	res, err := c.get(ctx, fmt.Sprintf("/api/agent_context/projects/%d/context", projectID), "")
+	if err != nil {
+		return nil, err
+	}
+	bundle := &ProjectContext{}
+	if err := json.Unmarshal(res.Body, bundle); err != nil {
+		return nil, fmt.Errorf("decode project context: %w", err)
+	}
+	return bundle, nil
+}
+
+// PushFeatures appends locally-produced features to a project's backlog.
+//
+// The server accepts the add action only, so this can never modify or
+// destroy work already in the project. `action_name` rather than `action`
+// because Rails reserves params[:action] for the controller action.
+func (c *Client) PushFeatures(ctx context.Context, projectID int64, action string, features any) (*FeaturePushReceipt, error) {
+	receipt := &FeaturePushReceipt{}
+	err := c.post(ctx, fmt.Sprintf("/api/agent_context/projects/%d/features", projectID), map[string]any{
+		"action_name": action,
+		"features":    features,
+	}, receipt)
+	if err != nil {
+		return nil, err
+	}
+	return receipt, nil
 }
 
 // PushArchitecture upserts a project's architecture profile.

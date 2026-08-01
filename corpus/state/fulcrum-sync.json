@@ -2,13 +2,13 @@
   "documents": {
     "estimation-rubric": {
       "filename": "estimation-rubric.md",
-      "remote_digest": "a67ac50d111b51163f4b7cf900eaa1f329bf2620de53cb2a1c5eefc438c2125c",
-      "file_sha256": "49a4f0e2cca1909de849fdaa58b4634c3651b3f55397df9b54156bdbe55e5f28"
+      "remote_digest": "17e5f04e9f9a519170b386b1b9dabe29a11336c84d22d79b193721072bcea9bb",
+      "file_sha256": "efc83c6264ec1d4846f904b91f9d219752c14117bbb93063d00014cde671396f"
     },
     "estimation-rubric-source": {
       "filename": "estimation-rubric.json",
-      "remote_digest": "a67ac50d111b51163f4b7cf900eaa1f329bf2620de53cb2a1c5eefc438c2125c",
-      "file_sha256": "12ce3ce872bb1043541ee9961d3d1ee1eb0bdc2d09fba7dc0827b2a926d1f1a7"
+      "remote_digest": "3b7b5f4c976eebe9d2b8ed1ba37278e544f1c8d8406df5e53aa82ab8bae65c90",
+      "file_sha256": "d70aab3119559792dacfec1f5cdcc33dae6c5f19f5f3cb5906b6397d6aa08cde"
     },
     "skill-corpus-writing-specs": {
       "filename": "skill-corpus-writing-specs.md",

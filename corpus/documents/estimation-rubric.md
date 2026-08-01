@@ -1,8 +1,9 @@
 ---
 name: estimation-rubric
 organization: Corpus Primary Organization
-rubric_id: organization-default-estimation
-rubric_digest: a67ac50d111b51163f4b7cf900eaa1f329bf2620de53cb2a1c5eefc438c2125c
+rubric_id: 
+digest: 17e5f04e9f9a519170b386b1b9dabe29a11336c84d22d79b193721072bcea9bb
+rubric_digest: 3b7b5f4c976eebe9d2b8ed1ba37278e544f1c8d8406df5e53aa82ab8bae65c90
 version: 1
 generated_at: 2026-07-01T07:00:00-05:00
 source: fulcrum
@@ -16,7 +17,9 @@ editing this rendering.
 
 ## Estimation Rubric
 
-Estimate each feature per role against this rubric. Estimates are one per feature per delivery role (level: feature-role).
+Estimate each feature per role against this rubric. Estimates are one per feature per delivery role.
+
+Size this work as it will actually be delivered: agent-led — coding agents doing the work with people directing and reviewing. Estimate the effort that world takes, not the effort a different one would.
 
 Reason in three values — low, likely, high — plus a confidence level. A long tail belongs in high rather than being absorbed into likely, and low == likely == high is legitimate for well-understood work. Emit every estimate as a structured object (the feature output format below shows the shape): low, likely and high in hours, confidence, components_included, components_excluded with reasons, assumptions, exclusions, unknowns, dependencies, risks, reuse_or_modification, and rationale. The committed value is the expected value, computed as (low + 4 * likely + high) / 6. It is never supplied directly: the system derives it from your range and snaps it to the nearest step of this project's complexity scale.
 
@@ -31,7 +34,7 @@ Consider every component. For each, either include its share in the estimate or 
 - `data_migrations` (delivery-component) — Data and migrations; applies when: The feature adds, reshapes or backfills persisted data. Includes: Schema changes, indexes and constraints; Backfills, and the rehearsal of one against production-shaped volumes; The ordering that keeps a deploy safe while old and new code overlap. Excludes: The application code reading the new shape, which is backend; Sequencing the release itself, which is deployment; Reversibility for users after release, which is rollout.
 - `integrations` (delivery-component) — Third-party integrations; applies when: The feature depends on a system the team does not control. Includes: Client code, authentication and credential handling; Retry, timeout and partial-failure behaviour; Sandbox setup and whatever the provider's review or approval requires. Excludes: Internal services the team owns, which are backend; Storing what comes back, which is data_migrations; Alerting on the integration failing, which is observability.
 - `testing` (support-coverage) — Automated testing; applies always. Includes: Unit and integration coverage of the behaviour being added; End-to-end coverage where the value is in the browser rather than the response; Characterising existing behaviour before changing it. Excludes: Manual verification by the person who wrote it, which is inside each delivery component; Client acceptance testing, which is project_management; Load and performance testing, which is estimated explicitly when required.
-- `accessibility` (support-coverage) — Accessibility; applies when: The feature has a user-facing surface. Includes: Keyboard operability and visible focus; Semantics and labelling that assistive technology depends on; Colour contrast, motion preferences and reading order. Excludes: Visual design choices themselves, which are ux_design; A formal external audit, which is estimated explicitly when required.
+- `accessibility` (support-coverage) — Accessibility; applies when: The feature has a user-facing surface. Includes: Keyboard operability and visible focus; Semantics and labelling that assistive technology depends on; Color contrast, motion preferences and reading order. Excludes: Visual design choices themselves, which are ux_design; A formal external audit, which is estimated explicitly when required.
 - `security_privacy` (support-coverage) — Security and privacy; applies when: The feature touches credentials, personal data, payment details, or changes an authorization boundary. Includes: Authorization rules and the tests that pin them; Handling of secrets and personal data, including what is logged; Rate limiting and abuse paths on anything unauthenticated. Excludes: Routine authentication already provided by the application; A formal penetration test, which is estimated explicitly when required.
 - `observability` (support-coverage) — Observability; applies when: The feature introduces a failure mode nobody would otherwise notice. Includes: Logging and error reporting at the boundaries that can fail; Metrics or alerts for the failure that matters; Whatever an on-call person needs to tell healthy from broken. Excludes: Product analytics, which is a delivery component of its own; Standing infrastructure monitoring already in place.
 - `deployment` (delivery-component) — Deployment; applies when: Releasing the feature needs more than the standard pipeline: new infrastructure, new configuration, or an ordered sequence. Includes: New services, environment variables, secrets or scheduled jobs; Build and pipeline changes the feature requires; The deploy ordering that keeps the system working mid-release. Excludes: An ordinary deploy through the existing pipeline; The migrations themselves, which are data_migrations; Exposing the feature to users, which is rollout.

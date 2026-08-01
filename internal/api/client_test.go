@@ -73,8 +73,18 @@ func TestCorpusManifestDecodes(t *testing.T) {
 	if source.ProposalSlug == nil || *source.ProposalSlug != "estimation-rubric" {
 		t.Errorf("source proposal_slug = %v", source.ProposalSlug)
 	}
-	if md.Digest == "" || md.Digest != source.Digest {
-		t.Errorf("digests: md=%q source=%q", md.Digest, source.Digest)
+	// The markdown is a RENDERING, not the document: the renderer merges in
+	// values the document does not carry, such as measured calibration
+	// multipliers. It is identified by the digest of its own body, so a
+	// rendering change moves the digest — under the old shared digest, a
+	// rendering could change while every client still answered "synced" and
+	// withheld the methodology update. The JSON source keeps the document's
+	// own digest, because there the document IS the artifact.
+	if md.Digest == "" || source.Digest == "" {
+		t.Errorf("digests must be present: md=%q source=%q", md.Digest, source.Digest)
+	}
+	if md.Digest == source.Digest {
+		t.Error("rendering and document must be identified separately, got one digest for both")
 	}
 
 	// Org skills: markdown that IS the source, flat filename, self proposal_slug.
@@ -334,4 +344,82 @@ func TestInsecureBaseURL(t *testing.T) {
 			t.Errorf("InsecureBaseURL(%q) = %v, want %v", base, got, want)
 		}
 	}
+}
+
+// The rendering's digest must verify the file a client synced.
+//
+// This is the property the shared digest used to hide: a rendering could change
+// while the manifest row did not, so `classify` answered "synced" against a
+// stale file and withheld exactly the methodology updates a dev machine most
+// needs. The digest covers the rendering BODY only — never the frontmatter,
+// which carries generated_at and would report drift on every regeneration.
+func TestRubricRenderingDigestVerifiesTheFile(t *testing.T) {
+	var m Manifest
+	if err := json.Unmarshal(corpusBytes(t, "manifest.json"), &m); err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+
+	var row ManifestDocument
+	for _, d := range m.Documents {
+		if d.Slug == "estimation-rubric" {
+			row = d
+		}
+	}
+	if row.Digest == "" {
+		t.Fatal("no estimation-rubric row in the manifest")
+	}
+
+	markdown := string(corpusBytes(t, "documents", "estimation-rubric.md"))
+	frontmatter, body, ok := splitFrontmatter(markdown)
+	if !ok {
+		t.Fatal("rubric markdown has no frontmatter")
+	}
+
+	sum := sha256.Sum256([]byte(body))
+	if got := hex.EncodeToString(sum[:]); got != row.Digest {
+		t.Errorf("digest of the rendering body = %s, manifest says %s", got, row.Digest)
+	}
+
+	// Stated in the frontmatter too, so a synced file can be checked on its own
+	// without the manifest that advertised it.
+	if stated := frontmatterValue(frontmatter, "digest"); stated != row.Digest {
+		t.Errorf("frontmatter digest = %q, manifest says %q", stated, row.Digest)
+	}
+
+	var source ManifestDocument
+	for _, d := range m.Documents {
+		if d.Slug == "estimation-rubric-source" {
+			source = d
+		}
+	}
+	if stated := frontmatterValue(frontmatter, "rubric_digest"); stated != source.Digest {
+		t.Errorf("frontmatter rubric_digest = %q, source row says %q", stated, source.Digest)
+	}
+}
+
+// splitFrontmatter returns the YAML block and the rendering after it.
+//
+// The server writes frontmatter, then a blank line, then the rendering — and
+// digests the rendering alone. So the single separating newline is dropped
+// here; leaving it in changes the hash.
+func splitFrontmatter(doc string) (frontmatter, body string, ok bool) {
+	if !strings.HasPrefix(doc, "---\n") {
+		return "", "", false
+	}
+	rest := doc[len("---\n"):]
+	end := strings.Index(rest, "\n---\n")
+	if end < 0 {
+		return "", "", false
+	}
+	return rest[:end], strings.TrimPrefix(rest[end+len("\n---\n"):], "\n"), true
+}
+
+func frontmatterValue(frontmatter, key string) string {
+	for _, line := range strings.Split(frontmatter, "\n") {
+		name, value, found := strings.Cut(line, ":")
+		if found && strings.TrimSpace(name) == key {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

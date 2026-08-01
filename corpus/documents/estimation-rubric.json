@@ -1,277 +1,222 @@
 {
-  "status": "draft",
-  "reviewers": [],
-  "rubric_id": "organization-default-estimation",
   "components": [
     {
       "key": "discovery",
       "title": "Discovery",
-      "excludes": [
-        "Routine familiarisation with a codebase the team already works in",
-        "Design exploration of a settled requirement, which is ux_design",
-        "Writing the code the spike proved out, which lands in its own component"
-      ],
+      "applicability": "conditional",
+      "applies_when": "The brief leaves a question open whose answer would change the shape of the work, not merely its size.",
+      "estimated_as": "delivery-component",
       "includes": [
         "Reading the existing implementation well enough to know what is already there",
         "Spiking a risky approach far enough to tell whether it works",
         "Getting a decision from whoever owns an unresolved product question"
       ],
-      "applies_when": "The brief leaves a question open whose answer would change the shape of the work, not merely its size.",
-      "estimated_as": "delivery-component",
-      "applicability": "conditional"
+      "excludes": [
+        "Routine familiarisation with a codebase the team already works in",
+        "Design exploration of a settled requirement, which is ux_design",
+        "Writing the code the spike proved out, which lands in its own component"
+      ]
     },
     {
       "key": "ux_design",
       "title": "UX and visual design",
-      "excludes": [
-        "Implementing the design in markup and styles, which is frontend",
-        "Deciding whether the feature should exist, which is discovery",
-        "Accessibility conformance work, which is accessibility"
-      ],
+      "applicability": "conditional",
+      "applies_when": "The feature introduces or changes something a person looks at or operates.",
+      "estimated_as": "delivery-component",
       "includes": [
         "Interaction and state design, including empty, loading, error and permission-denied states",
         "Visual design and its fit with the existing design system",
         "Design review and the revisions it produces"
       ],
-      "applies_when": "The feature introduces or changes something a person looks at or operates.",
-      "estimated_as": "delivery-component",
-      "applicability": "conditional"
+      "excludes": [
+        "Implementing the design in markup and styles, which is frontend",
+        "Deciding whether the feature should exist, which is discovery",
+        "Accessibility conformance work, which is accessibility"
+      ]
     },
     {
       "key": "frontend",
       "title": "Frontend",
-      "excludes": [
-        "The server endpoints being called, which is backend",
-        "Designing what is being built, which is ux_design",
-        "Automated coverage of the result, which is testing"
-      ],
+      "applicability": "conditional",
+      "applies_when": "The feature has a user-facing surface.",
+      "estimated_as": "delivery-component",
       "includes": [
         "Markup, styling and client-side behaviour",
         "Client-side validation and the error states it surfaces",
         "Wiring to the server contract, including loading and failure handling"
       ],
-      "applies_when": "The feature has a user-facing surface.",
-      "estimated_as": "delivery-component",
-      "applicability": "conditional"
+      "excludes": [
+        "The server endpoints being called, which is backend",
+        "Designing what is being built, which is ux_design",
+        "Automated coverage of the result, which is testing"
+      ]
     },
     {
       "key": "backend",
       "title": "Backend",
-      "excludes": [
-        "Schema changes and data backfills, which are data_migrations",
-        "Calls out to third-party systems, which are integrations",
-        "Automated coverage of the result, which is testing"
-      ],
+      "applicability": "always",
+      "applies_when": null,
+      "estimated_as": "delivery-component",
       "includes": [
         "Domain logic and the data models the behaviour lives on",
         "Request handling, routing, serialization and authorization rules",
         "Background jobs and scheduled work the feature requires"
       ],
-      "applies_when": null,
-      "estimated_as": "delivery-component",
-      "applicability": "always"
+      "excludes": [
+        "Schema changes and data backfills, which are data_migrations",
+        "Calls out to third-party systems, which are integrations",
+        "Automated coverage of the result, which is testing"
+      ]
     },
     {
       "key": "data_migrations",
       "title": "Data and migrations",
-      "excludes": [
-        "The application code reading the new shape, which is backend",
-        "Sequencing the release itself, which is deployment",
-        "Reversibility for users after release, which is rollout"
-      ],
+      "applicability": "conditional",
+      "applies_when": "The feature adds, reshapes or backfills persisted data.",
+      "estimated_as": "delivery-component",
       "includes": [
         "Schema changes, indexes and constraints",
         "Backfills, and the rehearsal of one against production-shaped volumes",
         "The ordering that keeps a deploy safe while old and new code overlap"
       ],
-      "applies_when": "The feature adds, reshapes or backfills persisted data.",
-      "estimated_as": "delivery-component",
-      "applicability": "conditional"
+      "excludes": [
+        "The application code reading the new shape, which is backend",
+        "Sequencing the release itself, which is deployment",
+        "Reversibility for users after release, which is rollout"
+      ]
     },
     {
       "key": "integrations",
       "title": "Third-party integrations",
-      "excludes": [
-        "Internal services the team owns, which are backend",
-        "Storing what comes back, which is data_migrations",
-        "Alerting on the integration failing, which is observability"
-      ],
+      "applicability": "conditional",
+      "applies_when": "The feature depends on a system the team does not control.",
+      "estimated_as": "delivery-component",
       "includes": [
         "Client code, authentication and credential handling",
         "Retry, timeout and partial-failure behaviour",
         "Sandbox setup and whatever the provider's review or approval requires"
       ],
-      "applies_when": "The feature depends on a system the team does not control.",
-      "estimated_as": "delivery-component",
-      "applicability": "conditional"
+      "excludes": [
+        "Internal services the team owns, which are backend",
+        "Storing what comes back, which is data_migrations",
+        "Alerting on the integration failing, which is observability"
+      ]
     },
     {
       "key": "testing",
       "title": "Automated testing",
-      "excludes": [
-        "Manual verification by the person who wrote it, which is inside each delivery component",
-        "Client acceptance testing, which is project_management",
-        "Load and performance testing, which is estimated explicitly when required"
-      ],
+      "applicability": "always",
+      "applies_when": null,
+      "estimated_as": "support-coverage",
       "includes": [
         "Unit and integration coverage of the behaviour being added",
         "End-to-end coverage where the value is in the browser rather than the response",
         "Characterising existing behaviour before changing it"
       ],
-      "applies_when": null,
-      "estimated_as": "support-coverage",
-      "applicability": "always"
+      "excludes": [
+        "Manual verification by the person who wrote it, which is inside each delivery component",
+        "Client acceptance testing, which is project_management",
+        "Load and performance testing, which is estimated explicitly when required"
+      ]
     },
     {
       "key": "accessibility",
       "title": "Accessibility",
-      "excludes": [
-        "Visual design choices themselves, which are ux_design",
-        "A formal external audit, which is estimated explicitly when required"
-      ],
+      "applicability": "conditional",
+      "applies_when": "The feature has a user-facing surface.",
+      "estimated_as": "support-coverage",
       "includes": [
         "Keyboard operability and visible focus",
         "Semantics and labelling that assistive technology depends on",
-        "Colour contrast, motion preferences and reading order"
+        "Color contrast, motion preferences and reading order"
       ],
-      "applies_when": "The feature has a user-facing surface.",
-      "estimated_as": "support-coverage",
-      "applicability": "conditional"
+      "excludes": [
+        "Visual design choices themselves, which are ux_design",
+        "A formal external audit, which is estimated explicitly when required"
+      ]
     },
     {
       "key": "security_privacy",
       "title": "Security and privacy",
-      "excludes": [
-        "Routine authentication already provided by the application",
-        "A formal penetration test, which is estimated explicitly when required"
-      ],
+      "applicability": "conditional",
+      "applies_when": "The feature touches credentials, personal data, payment details, or changes an authorization boundary.",
+      "estimated_as": "support-coverage",
       "includes": [
         "Authorization rules and the tests that pin them",
         "Handling of secrets and personal data, including what is logged",
         "Rate limiting and abuse paths on anything unauthenticated"
       ],
-      "applies_when": "The feature touches credentials, personal data, payment details, or changes an authorization boundary.",
-      "estimated_as": "support-coverage",
-      "applicability": "conditional"
+      "excludes": [
+        "Routine authentication already provided by the application",
+        "A formal penetration test, which is estimated explicitly when required"
+      ]
     },
     {
       "key": "observability",
       "title": "Observability",
-      "excludes": [
-        "Product analytics, which is a delivery component of its own",
-        "Standing infrastructure monitoring already in place"
-      ],
+      "applicability": "conditional",
+      "applies_when": "The feature introduces a failure mode nobody would otherwise notice.",
+      "estimated_as": "support-coverage",
       "includes": [
         "Logging and error reporting at the boundaries that can fail",
         "Metrics or alerts for the failure that matters",
         "Whatever an on-call person needs to tell healthy from broken"
       ],
-      "applies_when": "The feature introduces a failure mode nobody would otherwise notice.",
-      "estimated_as": "support-coverage",
-      "applicability": "conditional"
+      "excludes": [
+        "Product analytics, which is a delivery component of its own",
+        "Standing infrastructure monitoring already in place"
+      ]
     },
     {
       "key": "deployment",
       "title": "Deployment",
-      "excludes": [
-        "An ordinary deploy through the existing pipeline",
-        "The migrations themselves, which are data_migrations",
-        "Exposing the feature to users, which is rollout"
-      ],
+      "applicability": "conditional",
+      "applies_when": "Releasing the feature needs more than the standard pipeline: new infrastructure, new configuration, or an ordered sequence.",
+      "estimated_as": "delivery-component",
       "includes": [
         "New services, environment variables, secrets or scheduled jobs",
         "Build and pipeline changes the feature requires",
         "The deploy ordering that keeps the system working mid-release"
       ],
-      "applies_when": "Releasing the feature needs more than the standard pipeline: new infrastructure, new configuration, or an ordered sequence.",
-      "estimated_as": "delivery-component",
-      "applicability": "conditional"
+      "excludes": [
+        "An ordinary deploy through the existing pipeline",
+        "The migrations themselves, which are data_migrations",
+        "Exposing the feature to users, which is rollout"
+      ]
     },
     {
       "key": "rollout",
       "title": "Rollout",
-      "excludes": [
-        "Getting the code onto the servers, which is deployment",
-        "Reshaping the data, which is data_migrations"
-      ],
+      "applicability": "conditional",
+      "applies_when": "The feature changes behaviour for people or data that already exist.",
+      "estimated_as": "delivery-component",
       "includes": [
         "Feature flags, staged exposure and the removal of both afterwards",
         "Communicating the change to the people it affects",
         "The path back if it goes badly"
       ],
-      "applies_when": "The feature changes behaviour for people or data that already exist.",
-      "estimated_as": "delivery-component",
-      "applicability": "conditional"
+      "excludes": [
+        "Getting the code onto the servers, which is deployment",
+        "Reshaping the data, which is data_migrations"
+      ]
     },
     {
       "key": "project_management",
       "title": "Project management",
-      "excludes": [
-        "Technical decisions made while building, which sit in their own components",
-        "Resolving open product questions, which is discovery"
-      ],
+      "applicability": "always",
+      "applies_when": null,
+      "estimated_as": "support-coverage",
       "includes": [
         "Planning, estimation and the ceremonies the engagement runs",
         "Client communication, demos and acceptance",
         "Coordination across roles and unblocking"
       ],
-      "applies_when": null,
-      "estimated_as": "support-coverage",
-      "applicability": "always"
+      "excludes": [
+        "Technical decisions made while building, which sit in their own components",
+        "Resolving open product questions, which is discovery"
+      ]
     }
   ],
-  "provenance": {
-    "tiers": [
-      {
-        "key": "framework-guidance",
-        "description": "Published guidance from the framework or a standards body. Authoritative, versioned outside the organization, and citable.",
-        "evidence_class": "normative-framework-guidance"
-      },
-      {
-        "key": "reference-app-observation",
-        "description": "A pattern observed repeatedly across reference applications. Evidence of what is common, which is not the same as evidence of what is correct.",
-        "evidence_class": "repeated-reference-app-observation"
-      },
-      {
-        "key": "headway-convention",
-        "description": "How the organization chooses to work. Legitimate and binding inside the organization, and deliberately labelled so it is never mistaken for a law of the framework.",
-        "evidence_class": "headway-convention"
-      },
-      {
-        "key": "empirical-calibration",
-        "description": "Measured against recorded estimate actuals. The only tier that may carry a numeric multiplier, and the only one that can override the others.",
-        "evidence_class": "calibration-evidence"
-      }
-    ]
-  },
-  "aggregation": {
-    "function": "pert-three-point-1.0.0",
-    "operates_on": "hours",
-    "replaceable": true,
-    "hours_source": "scale-label-hours-mapping",
-    "committed_total": "sum-of-committed-values",
-    "expected_formula": "(low + 4 * likely + high) / 6",
-    "project_sigma_formula": "sqrt(sum(estimate_sigma ^ 2))",
-    "estimate_sigma_formula": "(high - low) / 6",
-    "independence_assumption": "The project sigma treats estimate errors as independent, which they are not: a wrong assumption about the domain, the team or the client usually misses several features the same way at once. Correlated error makes the real spread wider than this formula reports, so the project sigma is a floor on uncertainty rather than a measure of it. This is the first thing calibration evidence should be allowed to replace."
-  },
-  "calibration": {
-    "status": "no-evidence",
-    "multipliers": [],
-    "evidence_requirement": "A multiplier may be added only with a digest-bound reference to recorded estimate actuals and the sample size behind it. An unproven factor is worse than no factor: it is applied uniformly and invisibly, so it moves every number while looking like arithmetic rather than an opinion. Until actuals are captured, this list stays empty and estimators carry uncertainty in the range and the confidence level instead."
-  },
-  "reviewed_at": null,
-  "scale_binding": {
-    "source": "organization-complexity-scale",
-    "ordering": "by-hours-ascending",
-    "value_space": "labels",
-    "off_scale_handling": "reject",
-    "allows_degenerate_range": true,
-    "requires_monotonic_range": true
-  },
-  "rubric_version": "0.1.0",
-  "schema_version": 1,
-  "contract_version": "1.0.0",
   "confidence_levels": [
     {
       "key": "low",
@@ -293,12 +238,7 @@
     }
   ],
   "estimate_contract": {
-    "level": "feature-role",
-    "range_fields": [
-      "low",
-      "likely",
-      "high"
-    ],
+    "delivery_mode_assumption": "agent-led",
     "committed_value": "expected",
     "required_fields": [
       "low",
@@ -314,11 +254,15 @@
       "risks",
       "reuse_or_modification",
       "rationale"
-    ],
-    "reuse_or_modification": [
-      "new",
-      "reuse",
-      "modify-existing"
     ]
+  },
+  "aggregation": {
+    "function": "pert-three-point-1.0.0"
+  },
+  "calibration": {
+    "min_sample_size": 20,
+    "confidence_level": 0.95,
+    "application_mode": "off",
+    "capture_coverage_threshold": 0.8
   }
 }

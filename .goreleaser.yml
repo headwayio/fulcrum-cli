@@ -45,6 +45,7 @@ archives:
       {{- else }}{{ .Arch }}{{ end }}
     files:
       - README.md
+      - LICENSE
 
 checksum:
   name_template: checksums.txt
@@ -78,6 +79,11 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Casks
     homepage: https://github.com/headwayio/fulcrum-cli
+    # No `license:` here on purpose. GoReleaser ACCEPTS the key and silently
+    # drops it, because the Homebrew Cask DSL has no license stanza — that is a
+    # formula thing. Verified by reading a generated cask, not by the config
+    # validator, which passes it happily. The licence reaches users through the
+    # LICENSE file shipped inside the archive.
     description: Fulcrum from your terminal, and for the coding harness you work in
     binaries: [ fulcrum ]
     hooks:

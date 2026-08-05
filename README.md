@@ -104,3 +104,11 @@ four env vars work here too: `FULCRUM_URL`, `FULCRUM_API_TOKEN`,
 go test ./...
 go vet ./...
 ```
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
+
+Permissive on purpose: this is the client, and it is worth nothing without a
+Fulcrum server to talk to, so restricting it would buy no protection and cost
+every enterprise legal review that looks at what a developer installed.

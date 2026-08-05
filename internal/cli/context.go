@@ -10,16 +10,17 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/headwayio/fulcrum-cli/internal/estimate"
+	"github.com/headwayio/fulcrum-cli/internal/projectctx"
 )
 
-// ContextDir is where the bundle lands inside the project being estimated.
-// A directory rather than a dotfile because the skill writes its survey and
-// draft alongside it, and one gitignore line should cover the lot.
-const ContextDir = ".fulcrum"
+// The .fulcrum layout is owned by internal/projectctx, which internal/mcpserver
+// also reads to resolve a project from a checkout. Aliased rather than
+// re-declared so the two faces cannot drift apart on a filename.
+const ContextDir = projectctx.Dir
 
 const (
-	contextFile  = "project-context.md"
-	snappingFile = "snapping.json"
+	contextFile  = projectctx.ContextFile
+	snappingFile = projectctx.SnappingFile
 )
 
 func (a *App) contextCmd() *cobra.Command {

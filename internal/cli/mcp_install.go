@@ -18,12 +18,13 @@ func (a *App) mcpInstallCmd() *cobra.Command {
 		Use:   "install",
 		Short: "Register `fulcrum mcp` with the coding harnesses in this project",
 		Long: "Writes the Model Context Protocol server entry so Claude Code, Codex and\n" +
-			"Kimi Code can reach Fulcrum from this checkout.\n\n" +
-			"Claude Code and Codex get PROJECT-scoped entries (.mcp.json and\n" +
-			".codex/config.toml), so a teammate who clones the repository gets the\n" +
-			"server without setting anything up. Kimi only reads a global file, which\n" +
-			"costs nothing here: the server works out which project it is in from the\n" +
-			"directory the harness was launched in.\n\n" +
+			"Kimi Code can reach Fulcrum from this checkout, and registers the hook\n" +
+			"that records what an agent spends on a card.\n\n" +
+			"All three entries are PROJECT-scoped (.mcp.json, .codex/config.toml and\n" +
+			".kimi-code/mcp.json), so a teammate who clones the repository gets the\n" +
+			"server without setting anything up. The telemetry hook is deliberately\n" +
+			"NOT shared that way — it goes in .claude/settings.local.json, because it\n" +
+			"names this machine's own binary.\n\n" +
 			"An entry that already exists is left exactly as it is.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -77,6 +78,29 @@ func (a *App) runMCPInstall(dir, target string) error {
 		switch {
 		case result.Changed:
 			fmt.Fprintf(a.Stdout, "registered with %s → %s\n", result.Target, display(result.Path, home))
+		default:
+			fmt.Fprintf(a.Stdout, "%s: %s (%s)\n", result.Target, result.Note, display(result.Path, home))
+		}
+	}
+
+	// Hooks are the ONLY way token counts are ever recorded — no harness
+	// exposes its usage to the model, so no tool could report it. Installing
+	// the server without them would write config that posts into a void.
+	hookResults, err := mcpinstall.InstallHooks(targets, mcpinstall.Options{
+		ProjectDir: projectDir,
+		Command:    executable,
+		HomeDir:    home,
+	})
+	if err != nil {
+		return exitf(ExitError, "%v", err)
+	}
+	for _, result := range hookResults {
+		switch {
+		case result.Changed:
+			fmt.Fprintf(a.Stdout, "recording agent time and tokens from %s → %s\n",
+				result.Target, display(result.Path, home))
+		case result.Path == "":
+			fmt.Fprintf(a.Stdout, "%s: %s\n", result.Target, result.Note)
 		default:
 			fmt.Fprintf(a.Stdout, "%s: %s (%s)\n", result.Target, result.Note, display(result.Path, home))
 		}

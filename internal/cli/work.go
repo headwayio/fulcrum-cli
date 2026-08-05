@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -111,11 +112,19 @@ func (a *App) runWork(feature, role, harness, dir string, noLaunch bool) error {
 
 	name := featureName(brief.Text())
 	work := &projectctx.CurrentWork{
-		Feature:   feature,
-		Name:      name,
+		Feature: feature,
+		Name:    name,
+		// The NUMERIC ids, lifted from the brief we already have. The
+		// telemetry hook needs them and cannot go and ask: it fires on its own
+		// and has no way to turn "FUL-17" into a row. Taking them here costs
+		// nothing, because the brief has just been fetched.
+		FeatureID: briefID(brief.Text(), "feature_id"),
 		ProjectID: local.ProjectID,
 		Role:      role,
 		StartedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if projectID := briefID(brief.Text(), "project_id"); projectID != 0 {
+		work.ProjectID = projectID
 	}
 	if err := projectctx.WriteCurrentWork(root, work); err != nil {
 		return exitf(ExitError, "could not pin the card: %v", err)
@@ -160,6 +169,18 @@ func (a *App) ensureRegistered(root, harness string) error {
 	for _, result := range results {
 		if result.Changed {
 			fmt.Fprintf(a.Stdout, "registered the Fulcrum MCP server with %s\n", result.Target)
+		}
+	}
+
+	hookResults, err := mcpinstall.InstallHooks([]string{harness}, mcpinstall.Options{
+		ProjectDir: root, HomeDir: home, Command: executable,
+	})
+	if err != nil {
+		return exitf(ExitError, "%v", err)
+	}
+	for _, result := range hookResults {
+		if result.Changed {
+			fmt.Fprintf(a.Stdout, "now recording agent time and tokens from %s\n", result.Target)
 		}
 	}
 	return nil
@@ -237,6 +258,27 @@ func featureName(brief string) string {
 		return strings.TrimSpace(heading)
 	}
 	return ""
+}
+
+// briefID reads a numeric field out of the brief's YAML frontmatter. Best
+// effort by design: a brief that has not got the field yet leaves the pin
+// without it, and the hook says so rather than posting against a guess.
+func briefID(brief, key string) int64 {
+	for _, line := range strings.Split(brief, "\n") {
+		if line == "---" && strings.HasPrefix(brief, "---") {
+			continue
+		}
+		name, value, found := strings.Cut(line, ":")
+		if !found || strings.TrimSpace(name) != key {
+			continue
+		}
+		id, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		if err != nil {
+			return 0
+		}
+		return id
+	}
+	return 0
 }
 
 func suffix(name string) string {

@@ -12,10 +12,18 @@ version: 2
 
 project_name: fulcrum
 
+# NO TEST RUN HERE, deliberately. CI already gates every push to main, so a
+# tag points at a commit whose suite has passed; re-running it at release time
+# buys nothing and makes shipping hostage to a flake. It did exactly that on
+# the first attempt at v0.1.0: a timing-sensitive teatest in internal/tui
+# timed out on the runner and failed the release, on a commit whose own CI run
+# had passed minutes earlier — and by then the tag was already cut.
+#
+# `download` rather than `tidy`: tidy REWRITES go.mod and go.sum, so a release
+# could ship a module graph that differs from the one CI verified.
 before:
   hooks:
-    - go mod tidy
-    - go test ./...
+    - go mod download
 
 builds:
   - id: fulcrum

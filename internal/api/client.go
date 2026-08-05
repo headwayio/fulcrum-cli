@@ -384,6 +384,71 @@ func InsecureBaseURL(base string) bool {
 	return host != "localhost" && host != "127.0.0.1" && host != "::1"
 }
 
+// ToolDefinition is one tool exactly as the SERVER defines it. The client
+// deliberately holds no opinion about names, descriptions or schemas: the
+// registry lives in Rails so that adding a tool is a deploy rather than a
+// release of this binary, and re-stating any of it here would put that back.
+type ToolDefinition struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	InputSchema map[string]any `json:"inputSchema"`
+}
+
+type toolCatalogue struct {
+	Tools []ToolDefinition `json:"tools"`
+}
+
+// ToolResult is a tools/call response. IsError marks a failure the MODEL
+// should read and can retry from, as opposed to a transport fault, which
+// arrives as an *Error instead.
+type ToolResult struct {
+	Content []ToolContent `json:"content"`
+	IsError bool          `json:"isError"`
+}
+
+type ToolContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// Text joins every text block, which is all this contract currently emits.
+func (r *ToolResult) Text() string {
+	parts := make([]string, 0, len(r.Content))
+	for _, block := range r.Content {
+		if block.Text != "" {
+			parts = append(parts, block.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+// McpTools fetches the catalogue this token is permitted to call. The server
+// filters it, so what comes back is already the callable set.
+func (c *Client) McpTools(ctx context.Context) ([]ToolDefinition, error) {
+	res, err := c.get(ctx, "/api/mcp/tools", "")
+	if err != nil {
+		return nil, err
+	}
+	var catalogue toolCatalogue
+	if err := json.Unmarshal(res.Body, &catalogue); err != nil {
+		return nil, fmt.Errorf("decode tool catalogue: %w", err)
+	}
+	return catalogue.Tools, nil
+}
+
+func (c *Client) McpCall(ctx context.Context, name string, arguments map[string]any) (*ToolResult, error) {
+	if arguments == nil {
+		arguments = map[string]any{}
+	}
+	var result ToolResult
+	if err := c.post(ctx, "/api/mcp/call", map[string]any{
+		"name": name, "arguments": arguments,
+	}, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 func (c *Client) get(ctx context.Context, path, etag string) (*DocumentResult, error) {
 	endpoint := strings.TrimSuffix(c.BaseURL, "/") + path
 	if c.OrganizationID != "" {

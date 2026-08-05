@@ -152,12 +152,9 @@ func (a *App) ensureRegistered(root, harness string) error {
 	if err != nil {
 		return exitf(ExitError, "cannot find your home directory: %v", err)
 	}
-	executable, err := os.Executable()
+	executable, err := installableSelf()
 	if err != nil {
 		return exitf(ExitError, "cannot determine this binary's path: %v", err)
-	}
-	if link, linkErr := filepath.EvalSymlinks(executable); linkErr == nil {
-		executable = link
 	}
 
 	results, err := mcpinstall.Install([]string{harness}, mcpinstall.Options{

@@ -47,16 +47,9 @@ func (a *App) runMCPInstall(dir, target string) error {
 		return exitf(ExitError, "cannot find your home directory: %v", err)
 	}
 
-	// The absolute path of THIS binary, not the bare name: a harness is
-	// launched from a desktop app or a login shell whose PATH need not be the
-	// one this command ran under, and "command not found" surfaces inside the
-	// harness as an unexplained missing server.
-	executable, err := os.Executable()
+	executable, err := installableSelf()
 	if err != nil {
 		return exitf(ExitError, "cannot determine this binary's path: %v", err)
-	}
-	if resolved, linkErr := filepath.EvalSymlinks(executable); linkErr == nil {
-		executable = resolved
 	}
 
 	targets := mcpinstall.AllTargets

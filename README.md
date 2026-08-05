@@ -8,7 +8,8 @@ scriptable for CI and agent harnesses.
 
 **Status: pre-release.** The API kernel and state engine are done and
 golden-tested against the server's vendored contract corpus; the CLI verbs
-and TUI are landing next. Nothing is tagged yet.
+and TUI are landing next. `v0.1.0` is the first tagged release — the version
+is 0.x because the surface is still moving, not because it is untested.
 
 ## Quickstart
 

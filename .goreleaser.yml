@@ -1,0 +1,93 @@
+# Release build for `fulcrum`.
+#
+# CGO IS OFF, which is what makes the matrix below buildable from one Linux
+# runner: nothing here needs a C toolchain. go-keyring reaches the macOS
+# keychain by shelling out to /usr/bin/security and the Linux one over pure-Go
+# dbus, so the secret store still works in a static binary.
+#
+# The version is stamped into main.version, which cmd/fulcrum/main.go already
+# reads — an unstamped build reports itself as "dev", and a colleague asking
+# `fulcrum version` needs a real answer to know whether they are stale.
+version: 2
+
+project_name: fulcrum
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: fulcrum
+    main: ./cmd/fulcrum
+    binary: fulcrum
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: fulcrum
+    formats: [ tar.gz ]
+    # OS and arch spelled the way a person reads them, because this name ends
+    # up in a curl command someone types.
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+# macOS only. Homebrew CASKS ARE NOT SUPPORTED ON LINUX — Linux installs come
+# from install.sh, which reads the same release artifacts.
+#
+# A cask installs the PRE-BUILT binary. The existing headwayio tap builds from
+# source and so needs a Go toolchain on the machine first; this is the
+# difference between a colleague installing in ten seconds and installing a
+# compiler.
+homebrew_casks:
+  - name: fulcrum
+    # Per-tool tap, matching what the org already does (homebrew-tokenizer) and
+    # what the README already tells people to type:
+    #   brew install headwayio/fulcrum/fulcrum
+    repository:
+      owner: headwayio
+      name: homebrew-fulcrum
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: https://github.com/headwayio/fulcrum-cli
+    description: Fulcrum from your terminal, and for the coding harness you work in
+    binaries: [ fulcrum ]
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            # The binary is not notarised, so Gatekeeper quarantines anything
+            # downloaded from the internet and the first run dies with "cannot
+            # be opened because the developer cannot be verified" — which reads
+            # like a broken install rather than a policy.
+            system_command "/usr/bin/xattr",
+                           args: ["-dr", "com.apple.quarantine", "#{staged_path}/fulcrum"]
+          end

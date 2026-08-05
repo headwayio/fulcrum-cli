@@ -1,12 +1,16 @@
 // Package mcpinstall registers `fulcrum mcp` with the coding harnesses a
 // project might be worked in.
 //
-// Three harnesses, two file formats, and one asymmetry worth knowing: Claude
-// Code and Codex both support PROJECT-scoped config, so their entries live in
-// the checkout and a teammate who clones it gets the server for free. Kimi
-// only reads a global file. That costs less than it sounds like, because the
-// server resolves the project from the working directory it was launched in —
-// a single global entry serves every checkout.
+// Three harnesses, two file formats, and one rule: every entry is
+// PROJECT-scoped, so it lives in the checkout and a teammate who clones it
+// gets the server for free.
+//
+// KIMI'S PATH IS A TRAP. `~/.kimi/mcp.json` belongs to the older Kimi CLI,
+// which is being phased out; Kimi CODE — the one that ships as `kimi` today —
+// reads `~/.kimi-code/mcp.json` globally and `.kimi-code/mcp.json` per
+// project. We targeted the retired product's path for a while and the install
+// reported success the whole time, because writing a JSON file nothing reads
+// cannot fail. Verified against the docs and a real install 2026-08-05.
 package mcpinstall
 
 import (
@@ -62,7 +66,7 @@ func Install(targets []string, opts Options) ([]Result, error) {
 		case TargetClaude:
 			result, err = installJSON(target, filepath.Join(opts.ProjectDir, ".mcp.json"), opts)
 		case TargetKimi:
-			result, err = installJSON(target, filepath.Join(opts.HomeDir, ".kimi", "mcp.json"), opts)
+			result, err = installJSON(target, filepath.Join(opts.ProjectDir, ".kimi-code", "mcp.json"), opts)
 		case TargetCodex:
 			result, err = installCodex(opts)
 		default:

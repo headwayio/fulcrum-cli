@@ -53,7 +53,7 @@ func TestInstallWritesEveryHarness(t *testing.T) {
 	if _, ok := readServers(t, filepath.Join(opts.ProjectDir, ".mcp.json"))["fulcrum"]; !ok {
 		t.Error("claude entry missing")
 	}
-	if _, ok := readServers(t, filepath.Join(opts.HomeDir, ".kimi", "mcp.json"))["fulcrum"]; !ok {
+	if _, ok := readServers(t, filepath.Join(opts.ProjectDir, ".kimi-code", "mcp.json"))["fulcrum"]; !ok {
 		t.Error("kimi entry missing")
 	}
 
@@ -108,7 +108,7 @@ func TestInstallIsIdempotent(t *testing.T) {
 	for _, path := range []string{
 		filepath.Join(opts.ProjectDir, ".mcp.json"),
 		filepath.Join(opts.ProjectDir, ".codex", "config.toml"),
-		filepath.Join(opts.HomeDir, ".kimi", "mcp.json"),
+		filepath.Join(opts.ProjectDir, ".kimi-code", "mcp.json"),
 	} {
 		content, err := os.ReadFile(path)
 		if err != nil {
@@ -187,5 +187,26 @@ func TestInstallAppendsWithoutDisturbingExistingCodexConfig(t *testing.T) {
 func TestInstallRejectsAnUnknownHarness(t *testing.T) {
 	if _, err := mcpinstall.Install([]string{"emacs"}, options(t)); err == nil {
 		t.Fatal("expected an error naming the known harnesses")
+	}
+}
+
+// `~/.kimi/mcp.json` belongs to the RETIRED Kimi CLI. Kimi Code reads
+// `.kimi-code/mcp.json`, and writing to the wrong one CANNOT FAIL — the
+// install reported success the whole time it was writing a file nothing read.
+//
+// Both halves are asserted on purpose: a test that only checked the new path
+// would pass while still writing the old one too.
+func TestKimiIsInstalledWhereKimiCodeActuallyReads(t *testing.T) {
+	opts := options(t)
+
+	if _, err := mcpinstall.Install([]string{mcpinstall.TargetKimi}, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(opts.ProjectDir, ".kimi-code", "mcp.json")); err != nil {
+		t.Errorf("nothing at .kimi-code/mcp.json: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(opts.HomeDir, ".kimi", "mcp.json")); !os.IsNotExist(err) {
+		t.Error("wrote to ~/.kimi/mcp.json, which belongs to the retired Kimi CLI")
 	}
 }

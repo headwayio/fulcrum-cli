@@ -14,13 +14,29 @@ and TUI are landing next. Nothing is tagged yet.
 
 1. Sign in to your Fulcrum server and mint a personal API token at
    **Settings → Developer** (`/settings/developer`). It is shown exactly once.
-2. Install:
+2. Install.
+
+   macOS, via the tap:
 
    ```sh
    brew install headwayio/fulcrum/fulcrum
-   # or
-   curl -fsSL https://usefulcrum.ai/install.sh | sh
    ```
+
+   Linux, or macOS without Homebrew — Homebrew casks do not work on Linux at
+   all, so this is the path there rather than a second-class alternative:
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/headwayio/fulcrum-cli/main/install.sh | sh
+   ```
+
+   It picks the right build for your OS and architecture, verifies the
+   download against the release checksums, and installs to `/usr/local/bin`
+   or `~/.local/bin` — whichever it can write. Set `FULCRUM_BIN_DIR` to choose,
+   or `FULCRUM_VERSION` to pin a tag.
+
+   With a Go toolchain already to hand, `go install
+   github.com/headwayio/fulcrum-cli/cmd/fulcrum@latest` also works, though it
+   reports its version as `dev`.
 
 3. Connect and sync:
 

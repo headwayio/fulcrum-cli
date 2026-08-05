@@ -449,6 +449,56 @@ func (c *Client) McpCall(ctx context.Context, name string, arguments map[string]
 	return &result, nil
 }
 
+// TelemetryTurn is one turn of agent work as the telemetry endpoint takes it.
+//
+// The instants are the CLIENT'S ASSERTION and the server stamps its own
+// receipt time beside them — the thing being measured is reporting on itself,
+// so the two must stay separable. Token fields are omitted when zero rather
+// than sent as 0, because "no cache read" and "we did not measure" are
+// different claims.
+type TelemetryTurn struct {
+	TurnIndex           int    `json:"turn_index"`
+	StartedAt           string `json:"started_at"`
+	EndedAt             string `json:"ended_at"`
+	InputTokens         int64  `json:"input_tokens,omitempty"`
+	OutputTokens        int64  `json:"output_tokens,omitempty"`
+	CacheCreationTokens int64  `json:"cache_creation_tokens,omitempty"`
+	CacheReadTokens     int64  `json:"cache_read_tokens,omitempty"`
+	Model               string `json:"model,omitempty"`
+}
+
+// TelemetryReceipt is the card's totals AFTER the post, not just what this
+// request added — `recorded` counts turns now on record, so a retry reports
+// the same number rather than zero.
+type TelemetryReceipt struct {
+	FeatureID          int64            `json:"feature_id"`
+	Recorded           int              `json:"recorded"`
+	Episodes           int              `json:"episodes"`
+	AgentActiveSeconds float64          `json:"agent_active_seconds"`
+	Tokens             map[string]int64 `json:"tokens"`
+}
+
+// PostAgentTelemetry records turns against a card. Requires a token carrying
+// the `time` scope, and nothing else.
+func (c *Client) PostAgentTelemetry(
+	ctx context.Context, projectID, featureID int64, sessionRef, role string, turns []TelemetryTurn,
+) (*TelemetryReceipt, error) {
+	payload := map[string]any{
+		"project_id":  projectID,
+		"feature_id":  featureID,
+		"session_ref": sessionRef,
+		"turns":       turns,
+	}
+	if role != "" {
+		payload["role"] = role
+	}
+	var receipt TelemetryReceipt
+	if err := c.post(ctx, "/api/agent_context/telemetry", payload, &receipt); err != nil {
+		return nil, err
+	}
+	return &receipt, nil
+}
+
 func (c *Client) get(ctx context.Context, path, etag string) (*DocumentResult, error) {
 	endpoint := strings.TrimSuffix(c.BaseURL, "/") + path
 	if c.OrganizationID != "" {

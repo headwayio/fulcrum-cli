@@ -26,7 +26,7 @@ func (a *App) Root() *cobra.Command {
 	root.AddCommand(a.syncCmd(), a.statusCmd(), a.projectsCmd(), a.publishCmd(),
 		a.pushFactsCmd(), a.catCmd(), a.loginCmd(), a.versionCmd(), a.skillsCmd(),
 		a.mergeCmd(), a.revertCmd(), a.contextCmd(), a.estimateCmd(), a.featureCmd(),
-		a.mcpCmd(), a.workCmd())
+		a.mcpCmd(), a.workCmd(), a.hookCmd())
 	return root
 }
 

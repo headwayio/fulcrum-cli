@@ -99,7 +99,11 @@ homebrew_casks:
     # install printed "Calling `postflight` is deprecated! Use
     # `postflight_steps` instead" and told people to file an issue against the
     # tap. GoReleaser has no hook for steps, so this goes in verbatim — it
-    # renders at the top of the cask, which Homebrew accepts in any order.
+    # renders at the top of the cask, out of Homebrew's stanza order: it loads
+    # and installs fine, but `brew style` would flag it. Once
+    # goreleaser/goreleaser#6873 ships, move this to
+    # `hooks.post.install_steps` (with `{{ .StagedPath }}` in place of the
+    # escaped token) and it will render after `binary`, where it belongs.
     # `{{staged_path}}` is a Homebrew install-steps token, expanded at install
     # time. GoReleaser runs the whole rendered cask through its own template
     # engine, so the braces are escaped as a Go template string literal —

@@ -3,6 +3,8 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/headwayio/fulcrum-cli/internal/projectctx"
 )
 
 // The order is the point: an estimate made after reading the card's own is
@@ -55,5 +57,41 @@ func TestStarterPromptNamesTheRubricToolForTheMode(t *testing.T) {
 	}
 	if strings.Replace(blind, "_without_estimates", "", 1) != anchored {
 		t.Errorf("the two prompts should differ only in the rubric tool:\n%s\n---\n%s", anchored, blind)
+	}
+}
+
+func TestWorkProject(t *testing.T) {
+	brief := "---\nname: feature-brief\nproject: Acme App\nproject_id: 7\nfeature: ACME-3\n---\n\n# ACME-3 — Cart\n"
+	linked := &projectctx.Local{ProjectID: 7, ProjectName: "Acme App"}
+	other := &projectctx.Local{ProjectID: 9, ProjectName: "Beta Portal"}
+
+	// A checkout with no project takes the card's.
+	if id, err := workProject(nil, "ACME-3", brief); err != nil || id != 7 {
+		t.Errorf("unlinked: got %d, %v; want 7", id, err)
+	}
+
+	// A linked checkout works its own project's cards.
+	if id, err := workProject(linked, "ACME-3", brief); err != nil || id != 7 {
+		t.Errorf("same project: got %d, %v; want 7", id, err)
+	}
+
+	// Any other project's card is refused, naming both sides.
+	_, err := workProject(other, "ACME-3", brief)
+	if err == nil {
+		t.Fatal("a card from another project should be refused")
+	}
+	for _, want := range []string{`"Acme App" (project 7)`, `"Beta Portal" (project 9)`, "Nothing was changed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal lacks %q: %v", want, err)
+		}
+	}
+
+	// With no project named in the brief there is nothing to link to.
+	bare := "---\nname: feature-brief\n---\n"
+	if _, err := workProject(nil, "ACME-3", bare); err == nil {
+		t.Error("an unlinked checkout and a brief with no project should be refused")
+	}
+	if id, err := workProject(linked, "ACME-3", bare); err != nil || id != 7 {
+		t.Errorf("linked, brief without project: got %d, %v; want 7", id, err)
 	}
 }

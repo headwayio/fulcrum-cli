@@ -35,14 +35,17 @@ func (a *App) workCmd() *cobra.Command {
 			"The pin is the point: it is how `where_am_i` — and the telemetry hooks,\n" +
 			"which cannot ask anybody anything — know which card a session is about.\n" +
 			"Without it every tool call has to name the card again.\n\n" +
-			"Registers the MCP server if this checkout has not got one yet, so the\n" +
-			"first run in a new repository is the only setup there is.\n\n" +
+			"Registers the MCP server if this checkout has not got one yet, and links\n" +
+			"a checkout with no Fulcrum project to the card's, so the first run in a\n" +
+			"new repository is the only setup there is. A card from a different\n" +
+			"project than the checkout's is refused before anything is written.\n\n" +
+			"Every run refreshes " + ContextDir + "/" + contextFile + ", so the context an agent\n" +
+			"reads is current and matches how it was asked to estimate.\n\n" +
 			"The harness starts by estimating the card itself and comparing that with\n" +
 			"the card's current estimate. --without-estimates makes that estimate blind:\n" +
 			"the prompt reads the rubric from get_project_prompt_without_estimates, and\n" +
-			"this checkout's " + ContextDir + "/" + contextFile + " is rewritten with every feature's\n" +
-			"sizing withheld — the card's own included — until it has been compared.\n" +
-			"Run `fulcrum context` afterwards to put the estimates back in that file.",
+			"the context is written with every feature's sizing withheld — the card's\n" +
+			"own included. Without the flag, both carry the team's estimates.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 {
@@ -87,10 +90,11 @@ func (a *App) workClearCmd() *cobra.Command {
 }
 
 func (a *App) runWork(feature, role, harness, dir string, noLaunch, withoutEstimates bool) error {
-	local, root, err := a.resolveCheckout(dir)
+	root, err := a.checkoutRoot(dir)
 	if err != nil {
 		return err
 	}
+	local, _ := projectctx.Resolve(root)
 
 	resolved, err := a.resolveConfig()
 	if err != nil {
@@ -118,6 +122,23 @@ func (a *App) runWork(feature, role, harness, dir string, noLaunch, withoutEstim
 		return exitf(ExitError, "%s", brief.Text())
 	}
 
+	// Settled before anything is written: a card from another project must
+	// leave this checkout exactly as it found it.
+	projectID, err := workProject(local, feature, brief.Text())
+	if err != nil {
+		return err
+	}
+
+	// Every run writes the context in the mode it was asked for. This is what
+	// links a new checkout, keeps an old one current, and — without the flag —
+	// puts back estimates a blind run withheld. With the flag it is what makes
+	// the blind estimate blind: the checkout's copy carries the same inventory
+	// the withheld tool hides, where an agent looking around the repository,
+	// or a skill told to treat it as the authority, would read it.
+	if err := a.writeContext(client, projectID, root, withoutEstimates); err != nil {
+		return err
+	}
+
 	name := featureName(brief.Text())
 	work := &projectctx.CurrentWork{
 		Feature: feature,
@@ -127,12 +148,9 @@ func (a *App) runWork(feature, role, harness, dir string, noLaunch, withoutEstim
 		// and has no way to turn "FUL-17" into a row. Taking them here costs
 		// nothing, because the brief has just been fetched.
 		FeatureID: briefID(brief.Text(), "feature_id"),
-		ProjectID: local.ProjectID,
+		ProjectID: projectID,
 		Role:      role,
 		StartedAt: time.Now().UTC().Format(time.RFC3339),
-	}
-	if projectID := briefID(brief.Text(), "project_id"); projectID != 0 {
-		work.ProjectID = projectID
 	}
 	if err := projectctx.WriteCurrentWork(root, work); err != nil {
 		return exitf(ExitError, "could not pin the card: %v", err)
@@ -142,16 +160,6 @@ func (a *App) runWork(feature, role, harness, dir string, noLaunch, withoutEstim
 	// First run in a new checkout is the only setup there is.
 	if err := a.ensureRegistered(root, harness); err != nil {
 		return err
-	}
-
-	// The checkout's copy of the context carries the same inventory the
-	// withheld tool hides, and it sits where an agent looking around the
-	// repository — or a skill told to treat it as the authority — will read
-	// it. Replacing it is what makes the blind estimate blind.
-	if withoutEstimates {
-		if err := a.writeContext(client, local.ProjectID, root, true); err != nil {
-			return err
-		}
 	}
 
 	prompt := starterPrompt(feature, name, role, withoutEstimates)
@@ -233,18 +241,41 @@ func (a *App) launch(harness, root, prompt string) error {
 	return nil
 }
 
-func (a *App) resolveCheckout(dir string) (*projectctx.Local, string, error) {
-	root, err := a.checkoutRoot(dir)
-	if err != nil {
-		return nil, "", err
-	}
-	local, _ := projectctx.Resolve(root)
+// workProject is the project a checkout works the card in. A linked
+// checkout keeps its own project, and a card from any other is refused: the
+// context, the pin and the telemetry would all disagree about which project
+// the work belongs to. An unlinked checkout takes the card's project, which
+// the brief names — project ids are unique across Fulcrum, and the server
+// only answers for the caller's own organization.
+func workProject(local *projectctx.Local, feature, brief string) (int64, error) {
+	cardProject := briefID(brief, "project_id")
+
 	if local == nil {
-		return nil, "", exitf(ExitError,
-			"this checkout has no Fulcrum project linked.\n"+
-				"Run `fulcrum context --project <name>` in it first.")
+		if cardProject == 0 {
+			return 0, exitf(ExitError,
+				"this checkout has no Fulcrum project linked, and %s's brief does not say which\n"+
+					"project it belongs to. Run `fulcrum context --project <name>` in it first.", feature)
+		}
+		return cardProject, nil
 	}
-	return local, local.Root, nil
+
+	if cardProject != 0 && cardProject != local.ProjectID {
+		return 0, exitf(ExitError,
+			"%s belongs to %s (project %d), but this checkout is linked to %s (project %d).\n"+
+				"Nothing was changed. Work it from a checkout of %s, or relink this one with\n"+
+				"`fulcrum context --project %d`.",
+			feature, projectLabel(briefField(brief, "project")), cardProject,
+			projectLabel(local.ProjectName), local.ProjectID,
+			projectLabel(briefField(brief, "project")), cardProject)
+	}
+	return local.ProjectID, nil
+}
+
+func projectLabel(name string) string {
+	if name == "" {
+		return "another project"
+	}
+	return fmt.Sprintf("%q", name)
 }
 
 func (a *App) checkoutRoot(dir string) (string, error) {
@@ -279,6 +310,15 @@ func featureName(brief string) string {
 // effort by design: a brief that has not got the field yet leaves the pin
 // without it, and the hook says so rather than posting against a guess.
 func briefID(brief, key string) int64 {
+	id, err := strconv.ParseInt(briefField(brief, key), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
+// briefField reads a field out of the brief's YAML frontmatter, or "".
+func briefField(brief, key string) string {
 	for _, line := range strings.Split(brief, "\n") {
 		if line == "---" && strings.HasPrefix(brief, "---") {
 			continue
@@ -287,13 +327,9 @@ func briefID(brief, key string) int64 {
 		if !found || strings.TrimSpace(name) != key {
 			continue
 		}
-		id, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-		if err != nil {
-			return 0
-		}
-		return id
+		return strings.TrimSpace(value)
 	}
-	return 0
+	return ""
 }
 
 func suffix(name string) string {

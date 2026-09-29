@@ -288,6 +288,12 @@ func suffix(name string) string {
 // The starter prompt names the tools rather than pasting the brief: the point
 // of the server is that the agent fetches what it needs when it needs it, and
 // a prompt that front-loads the card is the snapshot this replaces.
+//
+// It asks for an estimate before the brief on purpose. get_feature carries the
+// card's current estimate, and a model that has read it anchors on it; sizing
+// from the requirements and the code first is what lets a card priced long
+// ago, or by another model, be priced again honestly. Nothing is written to
+// the card until the person has agreed to it, role by role.
 func starterPrompt(feature, name, role string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "I'm working Fulcrum card %s", feature)
@@ -295,7 +301,19 @@ func starterPrompt(feature, name, role string) string {
 		fmt.Fprintf(&b, " (%s)", name)
 	}
 	b.WriteString(" in this repository.\n\n")
-	b.WriteString("Start by calling where_am_i and get_feature to read the brief. ")
+	b.WriteString("Start by calling where_am_i. Before you look at the card's current estimate, ")
+	b.WriteString("estimate the work yourself: read the requirements with get_feature_prd, read ")
+	b.WriteString("this team's rubric with get_project_prompt (scope \"estimating\"), ")
+	b.WriteString("and look at the code this will touch. Size it as you, the model doing the work, would build ")
+	b.WriteString("it here. Give low, likely and high hours for each role, and run `fulcrum estimate` ")
+	b.WriteString("for the committed values. Don't call get_feature until your estimate is written down.\n\n")
+	b.WriteString("Then call get_feature to read the brief, and show me a side-by-side table: role, ")
+	b.WriteString("the card's current estimate, your estimate, the difference, and a line on why they ")
+	b.WriteString("differ. Let me push back or ask you to revise it; we may go back and forth, and I may ")
+	b.WriteString("accept your estimate for some roles and keep the card's for others. Only when I've ")
+	b.WriteString("said which roles to change, and agreed your numbers for them are final, set those ")
+	b.WriteString("roles with update_estimate and give the reason we settled on. Leave every other ")
+	b.WriteString("role alone.\n\n")
 	b.WriteString("Call start_work")
 	if role != "" {
 		fmt.Fprintf(&b, " with role %q", role)

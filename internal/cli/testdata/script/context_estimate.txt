@@ -15,6 +15,15 @@ grep '^\.fulcrum/$' .gitignore
 fulcrum context --project 'Acme App' --dir $WORK
 ! grep 'added .fulcrum/ to .gitignore' last-stdout.txt
 
+# --without-estimates writes the same context with every feature's sizing
+# withheld, and says so; running without it puts the estimates back.
+fulcrum context --project 'Acme App' --dir $WORK --without-estimates
+grep 'wrote .fulcrum/project-context.md .* for Acme App, every feature.s estimate withheld' last-stdout.txt
+grep '^estimates: withheld$' .fulcrum/project-context.md
+exists .fulcrum/snapping.json
+fulcrum context --project 'Acme App' --dir $WORK
+! grep 'withheld' .fulcrum/project-context.md
+
 # A draft is validated against the estimate contract, then the committed
 # value is DERIVED — (8 + 4*16 + 40) / 6 = 18.67, which snaps up to M.
 fulcrum -in draft.json estimate --dir $WORK

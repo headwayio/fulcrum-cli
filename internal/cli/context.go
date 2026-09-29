@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/headwayio/fulcrum-cli/internal/api"
 	"github.com/headwayio/fulcrum-cli/internal/estimate"
 	"github.com/headwayio/fulcrum-cli/internal/projectctx"
 )
@@ -25,6 +26,7 @@ const (
 
 func (a *App) contextCmd() *cobra.Command {
 	var project, dir string
+	var withoutEstimates bool
 	cmd := &cobra.Command{
 		Use:   "context",
 		Short: "Pull a project's estimation context for local estimating",
@@ -35,19 +37,25 @@ func (a *App) contextCmd() *cobra.Command {
 			"how your team actually sizes work rather than what the internet thinks\n" +
 			"the work takes.\n\n" +
 			"Weekly rates are NOT included — a local estimate produces hours, and\n" +
-			"cost stays server-side.",
+			"cost stays server-side.\n\n" +
+			"--without-estimates writes the same context with every feature's sizing\n" +
+			"withheld, for estimating a card before seeing what it is estimated at.\n" +
+			"It gives up the inventory's anchors to get that; run without the flag\n" +
+			"to put them back.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runContext(project, dir)
+			return a.runContext(project, dir, withoutEstimates)
 		},
 	}
 	cmd.Flags().StringVar(&project, "project", "", "project id or unambiguous name (required)")
 	cmd.Flags().StringVar(&dir, "dir", ".", "project directory to write into")
+	cmd.Flags().BoolVar(&withoutEstimates, "without-estimates", false,
+		"withhold every feature's sizing from the inventory")
 	_ = cmd.MarkFlagRequired("project")
 	return cmd
 }
 
-func (a *App) runContext(projectRef, into string) error {
+func (a *App) runContext(projectRef, into string, withoutEstimates bool) error {
 	resolved, err := a.resolveConfig()
 	if err != nil {
 		return err
@@ -60,8 +68,14 @@ func (a *App) runContext(projectRef, into string) error {
 	if err != nil {
 		return err
 	}
+	return a.writeContext(client, project.ID, into, withoutEstimates)
+}
 
-	bundle, err := client.ProjectContext(background(), project.ID)
+// writeContext fetches a project's context and writes it into
+// <into>/.fulcrum. Shared with `fulcrum work --without-estimates`, which has
+// to replace the checkout's copy for the same reason it changes the prompt.
+func (a *App) writeContext(client *api.Client, projectID int64, into string, withoutEstimates bool) error {
+	bundle, err := client.ProjectContext(background(), projectID, withoutEstimates)
 	if err != nil {
 		return wrapAPIError(err)
 	}
@@ -99,8 +113,12 @@ func (a *App) runContext(projectRef, into string) error {
 		fmt.Fprintf(a.Stderr, "could not update .gitignore: %v\n", err)
 	}
 
-	fmt.Fprintf(a.Stdout, "wrote %s (%.12s…) for %s\n",
-		filepath.Join(ContextDir, contextFile), bundle.Digest, bundle.Project.Name)
+	withheld := ""
+	if withoutEstimates {
+		withheld = ", every feature's estimate withheld"
+	}
+	fmt.Fprintf(a.Stdout, "wrote %s (%.12s…) for %s%s\n",
+		filepath.Join(ContextDir, contextFile), bundle.Digest, bundle.Project.Name, withheld)
 	fmt.Fprintf(a.Stdout, "wrote %s (%d snapping cases)\n",
 		filepath.Join(ContextDir, snappingFile), len(bundle.Fixtures.Cases))
 	if ignored {

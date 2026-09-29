@@ -26,7 +26,7 @@ var harnessCommands = map[string]string{
 
 func (a *App) workCmd() *cobra.Command {
 	var feature, role, harness, dir string
-	var noLaunch bool
+	var noLaunch, withoutEstimates bool
 
 	cmd := &cobra.Command{
 		Use:   "work [card]",
@@ -36,13 +36,19 @@ func (a *App) workCmd() *cobra.Command {
 			"which cannot ask anybody anything — know which card a session is about.\n" +
 			"Without it every tool call has to name the card again.\n\n" +
 			"Registers the MCP server if this checkout has not got one yet, so the\n" +
-			"first run in a new repository is the only setup there is.",
+			"first run in a new repository is the only setup there is.\n\n" +
+			"The harness starts by estimating the card itself and comparing that with\n" +
+			"the card's current estimate. --without-estimates makes that estimate blind:\n" +
+			"the prompt reads the rubric from get_project_prompt_without_estimates, and\n" +
+			"this checkout's " + ContextDir + "/" + contextFile + " is rewritten with every feature's\n" +
+			"sizing withheld — the card's own included — until it has been compared.\n" +
+			"Run `fulcrum context` afterwards to put the estimates back in that file.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 {
 				feature = args[0]
 			}
-			return a.runWork(feature, role, harness, dir, noLaunch)
+			return a.runWork(feature, role, harness, dir, noLaunch, withoutEstimates)
 		},
 	}
 	cmd.Flags().StringVar(&feature, "feature", "", "card to work, e.g. FUL-17")
@@ -51,6 +57,8 @@ func (a *App) workCmd() *cobra.Command {
 		"harness to launch (claude, codex, kimi)")
 	cmd.Flags().StringVar(&dir, "dir", ".", "checkout to work in")
 	cmd.Flags().BoolVar(&noLaunch, "no-launch", false, "pin the card and print the prompt, but launch nothing")
+	cmd.Flags().BoolVar(&withoutEstimates, "without-estimates", false,
+		"estimate the card blind: withhold every feature's estimate from the rubric and "+ContextDir)
 
 	cmd.AddCommand(a.workClearCmd())
 	return cmd
@@ -78,7 +86,7 @@ func (a *App) workClearCmd() *cobra.Command {
 	return cmd
 }
 
-func (a *App) runWork(feature, role, harness, dir string, noLaunch bool) error {
+func (a *App) runWork(feature, role, harness, dir string, noLaunch, withoutEstimates bool) error {
 	local, root, err := a.resolveCheckout(dir)
 	if err != nil {
 		return err
@@ -136,7 +144,17 @@ func (a *App) runWork(feature, role, harness, dir string, noLaunch bool) error {
 		return err
 	}
 
-	prompt := starterPrompt(feature, name, role)
+	// The checkout's copy of the context carries the same inventory the
+	// withheld tool hides, and it sits where an agent looking around the
+	// repository — or a skill told to treat it as the authority — will read
+	// it. Replacing it is what makes the blind estimate blind.
+	if withoutEstimates {
+		if err := a.writeContext(client, local.ProjectID, root, true); err != nil {
+			return err
+		}
+	}
+
+	prompt := starterPrompt(feature, name, role, withoutEstimates)
 	if noLaunch {
 		fmt.Fprintf(a.Stdout, "\n%s\n", prompt)
 		return nil
@@ -294,7 +312,16 @@ func suffix(name string) string {
 // from the requirements and the code first is what lets a card priced long
 // ago, or by another model, be priced again honestly. Nothing is written to
 // the card until the person has agreed to it, role by role.
-func starterPrompt(feature, name, role string) string {
+//
+// withoutEstimates names the rubric tool that withholds every card's sizing.
+// Without it the rubric comes with the team's priced inventory — the card's
+// own row among it — which anchors the estimate but no longer makes it blind.
+func starterPrompt(feature, name, role string, withoutEstimates bool) string {
+	rubric := "get_project_prompt"
+	if withoutEstimates {
+		rubric = "get_project_prompt_without_estimates"
+	}
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "I'm working Fulcrum card %s", feature)
 	if name != "" {
@@ -303,7 +330,7 @@ func starterPrompt(feature, name, role string) string {
 	b.WriteString(" in this repository.\n\n")
 	b.WriteString("Start by calling where_am_i. Before you look at the card's current estimate, ")
 	b.WriteString("estimate the work yourself: read the requirements with get_feature_prd, read ")
-	b.WriteString("this team's rubric with get_project_prompt (scope \"estimating\"), ")
+	fmt.Fprintf(&b, "this team's rubric with %s (scope \"estimating\"), ", rubric)
 	b.WriteString("and look at the code this will touch. Size it as you, the model doing the work, would build ")
 	b.WriteString("it here. Give low, likely and high hours for each role, and run `fulcrum estimate` ")
 	b.WriteString("for the committed values. Don't call get_feature until your estimate is written down.\n\n")

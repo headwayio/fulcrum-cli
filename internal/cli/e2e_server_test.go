@@ -196,39 +196,12 @@ func newFixtureServer() *fixtureServer {
 		}})
 	})
 
+	mux.HandleFunc("GET /api/agent_context/projects/{id}/context_without_estimates", func(w http.ResponseWriter, r *http.Request) {
+		contextBundle(w, r, "---\nname: project-context\nestimates: withheld\n---\n\n## Estimation Rubric\n\n| Mapping engine | withheld |\n")
+	})
+
 	mux.HandleFunc("GET /api/agent_context/projects/{id}/context", func(w http.ResponseWriter, r *http.Request) {
-		id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if id < 1 || id > 3 {
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			w.Write(corpusFile("errors", "unknown_project.json"))
-			return
-		}
-		// A gapped scale, so a midpoint case is present and the client's
-		// round-up rule is actually exercised by `fulcrum context`.
-		scale := []map[string]any{
-			{"label": "S", "points": 1, "hours": 4.0},
-			{"label": "M", "points": 3, "hours": 16.0},
-			{"label": "L", "points": 5, "hours": 40.0},
-		}
-		json.NewEncoder(w).Encode(map[string]any{
-			"project":  map[string]any{"id": id, "name": "Acme App"},
-			"digest":   "abc123def4567890abc123def4567890abc123def4567890abc123def4567890",
-			"filename": fmt.Sprintf("project-%d-context.md", id),
-			"format":   "markdown",
-			"body":     "---\nname: project-context\n---\n\n## Estimation Rubric\n\nEstimate each feature per role.\n",
-			"snapping_fixtures": map[string]any{
-				"scale":            scale,
-				"expected_formula": "(low + 4 * likely + high) / 6",
-				"rule":             "Nearest label by hours; an exact midpoint rounds UP.",
-				"cases": []map[string]any{
-					{"hours": 4.0, "label": "S"},
-					{"hours": 10.0, "label": "M"},
-					{"hours": 16.0, "label": "M"},
-					{"hours": 28.0, "label": "L"},
-					{"hours": 40.0, "label": "L"},
-				},
-			},
-		})
+		contextBundle(w, r, "---\nname: project-context\n---\n\n## Estimation Rubric\n\nEstimate each feature per role.\n")
 	})
 
 	mux.HandleFunc("POST /api/agent_context/projects/{id}/features", func(w http.ResponseWriter, r *http.Request) {
@@ -383,4 +356,41 @@ func (f *fixtureServer) editDocument(slug, replace, with string) bool {
 func parseID(s string) int64 {
 	id, _ := strconv.ParseInt(s, 10, 64)
 	return id
+}
+
+// contextBundle answers both context endpoints alike; only the body differs,
+// as it does on the server.
+func contextBundle(w http.ResponseWriter, r *http.Request, body string) {
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if id < 1 || id > 3 {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		w.Write(corpusFile("errors", "unknown_project.json"))
+		return
+	}
+	// A gapped scale, so a midpoint case is present and the client's
+	// round-up rule is actually exercised by `fulcrum context`.
+	scale := []map[string]any{
+		{"label": "S", "points": 1, "hours": 4.0},
+		{"label": "M", "points": 3, "hours": 16.0},
+		{"label": "L", "points": 5, "hours": 40.0},
+	}
+	json.NewEncoder(w).Encode(map[string]any{
+		"project":  map[string]any{"id": id, "name": "Acme App"},
+		"digest":   "abc123def4567890abc123def4567890abc123def4567890abc123def4567890",
+		"filename": fmt.Sprintf("project-%d-context.md", id),
+		"format":   "markdown",
+		"body":     body,
+		"snapping_fixtures": map[string]any{
+			"scale":            scale,
+			"expected_formula": "(low + 4 * likely + high) / 6",
+			"rule":             "Nearest label by hours; an exact midpoint rounds UP.",
+			"cases": []map[string]any{
+				{"hours": 4.0, "label": "S"},
+				{"hours": 10.0, "label": "M"},
+				{"hours": 16.0, "label": "M"},
+				{"hours": 28.0, "label": "L"},
+				{"hours": 40.0, "label": "L"},
+			},
+		},
+	})
 }

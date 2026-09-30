@@ -328,8 +328,16 @@ func (c *Client) CreateSkillDraft(ctx context.Context, name string) (*SkillDraft
 // against. Deliberately not part of the manifest — see the server's
 // Api::ProjectContextsController for why one developer does not sync every
 // project's priced backlog.
-func (c *Client) ProjectContext(ctx context.Context, projectID int64) (*ProjectContext, error) {
-	res, err := c.get(ctx, fmt.Sprintf("/api/agent_context/projects/%d/context", projectID), "")
+//
+// withoutEstimates asks for the same bundle with every feature's sizing
+// withheld, for an estimate that has to be made before seeing the numbers
+// already on the board.
+func (c *Client) ProjectContext(ctx context.Context, projectID int64, withoutEstimates bool) (*ProjectContext, error) {
+	path := fmt.Sprintf("/api/agent_context/projects/%d/context", projectID)
+	if withoutEstimates {
+		path += "_without_estimates"
+	}
+	res, err := c.get(ctx, path, "")
 	if err != nil {
 		return nil, err
 	}

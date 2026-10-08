@@ -33,5 +33,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # A SEPARATE token, because the default one is scoped to this
           # repository and the cask lands in another. Needs `contents: write`
-          # on headwayio/homebrew-fulcrum and nothing else.
+          # (to push the cask branch) and `pull_requests: write` (to open the
+          # PR the tap's ruleset requires) on headwayio/homebrew-fulcrum, and
+          # nothing else.
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

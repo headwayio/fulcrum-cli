@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"organization required: pass organization_id (your organizations: 990101=Corpus Primary Organization, 990102=Corpus Second Organization). On a hosted server URL add ?organization_id=<id>; with the fulcrum CLI set FULCRUM_ORG_ID."}],"isError":true}}

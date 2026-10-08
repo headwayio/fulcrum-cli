@@ -1,7 +1,10 @@
 # API contract corpus
 
-Byte-exact goldens for Fulcrum's `/api/agent_context` contract (contract 1),
-vendored from the Fulcrum server repo. **Never edit by hand.**
+Byte-exact goldens for Fulcrum's `/api/agent_context` contract (contract 1)
+and the JSON-RPC responses of its MCP endpoint, `POST /mcp` (`mcp-rpc/`),
+vendored from the Fulcrum server repo. **Never edit by hand.** `mcp/` pins the
+older `/api/mcp/*` endpoint, which this client no longer calls; it goes when
+the server retires that endpoint.
 
 They are generated there by `bin/rails api_contract:regenerate` under a frozen
 clock against a canonical seeded organization, and a server-side spec fails

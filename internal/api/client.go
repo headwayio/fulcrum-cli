@@ -1,6 +1,7 @@
 // Package api is the typed HTTP client for Fulcrum's /api/agent_context
-// contract (contract 1). Bearer auth; organization_id rides the query string
-// on GETs and the JSON body on POSTs; server error bodies are preserved
+// contract (contract 1), and for the MCP tools behind POST /mcp. Bearer auth;
+// organization_id rides the query string on GETs and on POST /mcp, and the
+// JSON body on every other POST; server error bodies are preserved
 // verbatim — they are the UX. Decoding never rejects unknown fields: that
 // tolerance is the forward-compatibility contract.
 package api
@@ -15,7 +16,9 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 // Client talks to one Fulcrum server as one token.
@@ -27,6 +30,10 @@ type Client struct {
 	// 426 branch keys on it.
 	Version    string
 	HTTPClient *http.Client
+
+	// rpcID numbers JSON-RPC requests. The server only needs them to
+	// increase within a process; they let a response be matched to its call.
+	rpcID atomic.Int64
 }
 
 // Error is a non-2xx HTTP response from the server. Contract errors are
@@ -425,28 +432,110 @@ func (r *ToolResult) Text() string {
 // McpTools fetches the catalogue this token is permitted to call. The server
 // filters it, so what comes back is already the callable set.
 func (c *Client) McpTools(ctx context.Context) ([]ToolDefinition, error) {
-	res, err := c.get(ctx, "/api/mcp/tools", "")
-	if err != nil {
-		return nil, err
-	}
 	var catalogue toolCatalogue
-	if err := json.Unmarshal(res.Body, &catalogue); err != nil {
-		return nil, fmt.Errorf("decode tool catalogue: %w", err)
+	if err := c.rpc(ctx, "tools/list", map[string]any{}, &catalogue); err != nil {
+		return nil, err
 	}
 	return catalogue.Tools, nil
 }
 
+// McpCall runs one tool. A tool that fails — unknown name, a scope this token
+// lacks, no organization chosen, a card that does not exist — comes back as a
+// result with IsError set, not as an error: that text is for the model.
 func (c *Client) McpCall(ctx context.Context, name string, arguments map[string]any) (*ToolResult, error) {
 	if arguments == nil {
 		arguments = map[string]any{}
 	}
 	var result ToolResult
-	if err := c.post(ctx, "/api/mcp/call", map[string]any{
+	if err := c.rpc(ctx, "tools/call", map[string]any{
 		"name": name, "arguments": arguments,
 	}, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
+}
+
+// mcpPath is the hosted MCP endpoint: JSON-RPC 2.0 over a plain POST, one
+// request in and one response out. The server is stateless, so no initialize
+// handshake or session id comes first.
+const mcpPath = "/mcp"
+
+// RPCError is a JSON-RPC error object in a 200 response: the server
+// understood the HTTP request but not the call (an unknown method, malformed
+// params). It is a protocol fault, distinct both from *Error, which is an
+// HTTP refusal before dispatch, and from a ToolResult with IsError, which is
+// a tool failing in a way the model can read.
+type RPCError struct {
+	Method  string
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data,omitempty"`
+}
+
+func (e *RPCError) Error() string {
+	return fmt.Sprintf("POST %s %s → JSON-RPC error %d: %s", mcpPath, e.Method, e.Code, e.Message)
+}
+
+// AsRPCError returns the JSON-RPC error inside err, if any.
+func AsRPCError(err error) (*RPCError, bool) {
+	var rpcErr *RPCError
+	ok := errors.As(err, &rpcErr)
+	return rpcErr, ok
+}
+
+type rpcResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Result  json.RawMessage `json:"result"`
+	Error   *RPCError       `json:"error"`
+}
+
+// rpc sends one JSON-RPC request to POST /mcp.
+//
+// organization_id rides the QUERY STRING here, unlike every other POST: the
+// JSON body is the JSON-RPC envelope, and the server reads the organization
+// from the URL so a hosted harness can carry it in the server address.
+func (c *Client) rpc(ctx context.Context, method string, params map[string]any, into any) error {
+	id := c.rpcID.Add(1)
+	body, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": id, "method": method, "params": params,
+	})
+	if err != nil {
+		return err
+	}
+	endpoint := strings.TrimSuffix(c.BaseURL, "/") + mcpPath
+	if c.OrganizationID != "" {
+		endpoint += "?organization_id=" + url.QueryEscape(c.OrganizationID)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	res, err := c.do(req, mcpPath)
+	if err != nil {
+		return err
+	}
+
+	var envelope rpcResponse
+	if err := json.Unmarshal(res.Body, &envelope); err != nil {
+		return fmt.Errorf("decode %s response: %w", method, err)
+	}
+	if envelope.Error != nil {
+		envelope.Error.Method = method
+		return envelope.Error
+	}
+	if want := strconv.FormatInt(id, 10); string(envelope.ID) != want {
+		return fmt.Errorf("%s response answered request id %s, not %s", method, envelope.ID, want)
+	}
+	if len(envelope.Result) == 0 || string(envelope.Result) == "null" {
+		return fmt.Errorf("%s response carried neither a result nor an error", method)
+	}
+	if err := json.Unmarshal(envelope.Result, into); err != nil {
+		return fmt.Errorf("decode %s result: %w", method, err)
+	}
+	return nil
 }
 
 // TelemetryTurn is one turn of agent work as the telemetry endpoint takes it.

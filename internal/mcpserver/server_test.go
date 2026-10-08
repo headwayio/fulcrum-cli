@@ -16,9 +16,10 @@ import (
 
 // fakeDeps stands in for the server, recording what the bridge forwarded.
 type fakeDeps struct {
-	tools []api.ToolDefinition
-	calls []recordedCall
-	err   error
+	tools  []api.ToolDefinition
+	calls  []recordedCall
+	result *api.ToolResult
+	err    error
 }
 
 type recordedCall struct {
@@ -34,6 +35,9 @@ func (f *fakeDeps) McpCall(_ context.Context, name string, arguments map[string]
 	f.calls = append(f.calls, recordedCall{name: name, arguments: arguments})
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.result != nil {
+		return f.result, nil
 	}
 	return &api.ToolResult{Content: []api.ToolContent{{Type: "text", Text: "served " + name}}}, nil
 }
@@ -233,11 +237,15 @@ func TestATokenFailureReachesTheModelAsAReadableResult(t *testing.T) {
 	}
 }
 
-func TestAScopeFailureNamesTheTool(t *testing.T) {
+// POST /mcp reports a missing scope as a tool failure rather than an HTTP
+// refusal, so the server's own text — which names the remedy — must reach the
+// model unchanged and still flagged as an error.
+func TestAScopeFailureResultPassesThroughVerbatim(t *testing.T) {
+	refusal := "this token is not permitted to update the execution board; " +
+		"mint one with the execution permission at /settings/developer"
 	deps := &fakeDeps{
-		tools: catalogue(),
-		err: &api.Error{Status: 403, Code: "insufficient_scope",
-			ServerMessage: "mint one with the execution permission"},
+		tools:  catalogue(),
+		result: &api.ToolResult{IsError: true, Content: []api.ToolContent{{Type: "text", Text: refusal}}},
 	}
 	session := connect(t, deps, linkedCheckout(t))
 
@@ -245,8 +253,29 @@ func TestAScopeFailureNamesTheTool(t *testing.T) {
 	if !isError {
 		t.Fatal("expected isError")
 	}
-	if !strings.Contains(text, "get_project_prompt") || !strings.Contains(text, "execution") {
-		t.Errorf("expected the tool and the missing scope: %s", text)
+	if text != refusal {
+		t.Errorf("text = %q, want the server's own", text)
+	}
+}
+
+func TestAProtocolErrorNamesTheToolAndCode(t *testing.T) {
+	deps := &fakeDeps{
+		tools: catalogue(),
+		err:   &api.RPCError{Method: "tools/call", Code: -32602, Message: "invalid params"},
+	}
+	session := connect(t, deps, linkedCheckout(t))
+
+	text, isError := callText(t, session, "get_project_prompt", map[string]any{})
+	if !isError {
+		t.Fatal("expected isError so the model can see it")
+	}
+	for _, want := range []string{"get_project_prompt", "-32602", "invalid params"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("expected %q in: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "could not reach") {
+		t.Errorf("a protocol error is not a connectivity failure: %s", text)
 	}
 }
 

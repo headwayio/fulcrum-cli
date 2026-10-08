@@ -175,6 +175,9 @@ func wrapAPIError(err error) error {
 		}
 		return exitf(ExitError, "%v", apiErr)
 	}
+	if rpcErr, ok := api.AsRPCError(err); ok {
+		return exitf(ExitError, "%v", rpcErr)
+	}
 	return exitf(ExitError, "cannot reach the server: %v", err)
 }
 

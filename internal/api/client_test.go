@@ -105,6 +105,7 @@ func TestCorpusErrorBodiesDecode(t *testing.T) {
 		{"unauthorized.json", "unauthorized"},
 		{"organization_required.json", "organization_required"},
 		{"unknown_document.json", "unknown_document"},
+		{"unknown_feature.json", "unknown_feature"},
 		{"unknown_project.json", "unknown_project"},
 		{"unknown_proposal.json", "unknown_proposal"},
 	}
@@ -422,4 +423,264 @@ func frontmatterValue(frontmatter, key string) string {
 		}
 	}
 	return ""
+}
+
+func TestCorpusTelemetryReceiptDecodes(t *testing.T) {
+	var receipt TelemetryReceipt
+	if err := json.Unmarshal(corpusBytes(t, "telemetry", "receipt.json"), &receipt); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if receipt.FeatureID == 0 || receipt.Recorded == 0 || receipt.Tokens["total"] == 0 {
+		t.Errorf("receipt = %+v", receipt)
+	}
+}
+
+// --- POST /mcp: JSON-RPC 2.0, pinned by corpus/mcp-rpc ---
+
+// Every mcp-rpc golden is a JSON-RPC 2.0 response carrying exactly one of
+// result or error — including initialize.json, which this client never sends
+// because the server is stateless, but which pins the envelope all the same.
+func TestCorpusMcpRpcEnvelopes(t *testing.T) {
+	entries, err := os.ReadDir(corpusPath("mcp-rpc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("no mcp-rpc fixtures vendored")
+	}
+	for _, entry := range entries {
+		var envelope rpcResponse
+		if err := json.Unmarshal(corpusBytes(t, "mcp-rpc", entry.Name()), &envelope); err != nil {
+			t.Errorf("%s: %v", entry.Name(), err)
+			continue
+		}
+		hasResult := len(envelope.Result) > 0 && string(envelope.Result) != "null"
+		if envelope.JSONRPC != "2.0" || hasResult == (envelope.Error != nil) {
+			t.Errorf("%s: jsonrpc=%q result=%v error=%v", entry.Name(), envelope.JSONRPC, hasResult, envelope.Error)
+		}
+	}
+}
+
+// rpcRequest is what the client put on the wire.
+type rpcRequest struct {
+	JSONRPC string         `json:"jsonrpc"`
+	ID      int64          `json:"id"`
+	Method  string         `json:"method"`
+	Params  map[string]any `json:"params"`
+}
+
+// serveRPC answers every request with a corpus fixture, re-stamped with the
+// request's id the way the live server echoes it. The fixtures were generated
+// with id 1.
+func serveRPC(t *testing.T, fixture string, seen *[]rpcRequest, inspect func(*http.Request)) (*Client, *httptest.Server) {
+	t.Helper()
+	golden := string(corpusBytes(t, "mcp-rpc", fixture))
+	return newTestClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if inspect != nil {
+			inspect(r)
+		}
+		var req rpcRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("request body is not JSON: %v", err)
+		}
+		if seen != nil {
+			*seen = append(*seen, req)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, strings.Replace(golden, `"id":1,`, fmt.Sprintf(`"id":%d,`, req.ID), 1))
+	}))
+}
+
+func TestMcpToolsPostsToolsListToMcp(t *testing.T) {
+	var got *http.Request
+	var seen []rpcRequest
+	client, server := serveRPC(t, "tools-list.json", &seen, func(r *http.Request) {
+		got = r.Clone(context.Background())
+	})
+	defer server.Close()
+
+	tools, err := client.McpTools(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Method != http.MethodPost || got.URL.Path != "/mcp" {
+		t.Errorf("request = %s %s, want POST /mcp", got.Method, got.URL.Path)
+	}
+	if got.URL.Query().Get("organization_id") != "42" {
+		t.Errorf("org must ride the query on POST /mcp, got %q", got.URL.RawQuery)
+	}
+	if got.Header.Get("Authorization") != "Bearer tok-123" {
+		t.Errorf("auth header = %q", got.Header.Get("Authorization"))
+	}
+	// The 426 kill switch and the usage report both key on this.
+	if got.Header.Get("X-Fulcrum-Client") != "fulcrum/1.2.3" {
+		t.Errorf("client identity = %q", got.Header.Get("X-Fulcrum-Client"))
+	}
+	if got.Header.Get("Content-Type") != "application/json" {
+		t.Errorf("content-type = %q", got.Header.Get("Content-Type"))
+	}
+
+	req := seen[0]
+	if req.JSONRPC != "2.0" || req.Method != "tools/list" || req.ID == 0 {
+		t.Errorf("envelope = %+v", req)
+	}
+	if req.Params == nil || len(req.Params) != 0 {
+		t.Errorf("tools/list params = %v, want {}", req.Params)
+	}
+
+	byName := map[string]ToolDefinition{}
+	for _, tool := range tools {
+		byName[tool.Name] = tool
+	}
+	feature, ok := byName["get_feature"]
+	if !ok {
+		t.Fatalf("get_feature missing from %d tools", len(tools))
+	}
+	if feature.Description == "" || feature.InputSchema["type"] != "object" {
+		t.Errorf("get_feature = %+v", feature)
+	}
+}
+
+func TestMcpCallPostsToolsCallToMcp(t *testing.T) {
+	var seen []rpcRequest
+	var rawQuery string
+	client, server := serveRPC(t, "tools-call.json", &seen, func(r *http.Request) {
+		rawQuery = r.URL.RawQuery
+	})
+	defer server.Close()
+
+	result, err := client.McpCall(context.Background(), "list_projects", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError || !strings.Contains(result.Text(), "Corpus Project") {
+		t.Errorf("result = %+v", result)
+	}
+
+	req := seen[0]
+	if req.Method != "tools/call" || req.Params["name"] != "list_projects" {
+		t.Errorf("envelope = %+v", req)
+	}
+	if arguments, ok := req.Params["arguments"].(map[string]any); !ok || len(arguments) != 0 {
+		t.Errorf("nil arguments must go out as {}, got %#v", req.Params["arguments"])
+	}
+	if _, inParams := req.Params["organization_id"]; inParams {
+		t.Error("organization_id must not ride the JSON-RPC body")
+	}
+	if rawQuery != "organization_id=42" {
+		t.Errorf("query = %q", rawQuery)
+	}
+}
+
+func TestMcpRequestIdsIncrease(t *testing.T) {
+	var seen []rpcRequest
+	client, server := serveRPC(t, "tools-call.json", &seen, nil)
+	defer server.Close()
+
+	for range 3 {
+		if _, err := client.McpCall(context.Background(), "list_projects", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 1; i < len(seen); i++ {
+		if seen[i].ID <= seen[i-1].ID {
+			t.Errorf("ids = %d then %d, want increasing", seen[i-1].ID, seen[i].ID)
+		}
+	}
+}
+
+// A tool failure is a RESULT for the model, never an error.
+func TestMcpCallToolFailuresAreResults(t *testing.T) {
+	cases := []struct {
+		fixture string
+		prefix  string
+	}{
+		{"tool-error.json", "No card matching"},
+		// No structured org list on this door: the text names the choices.
+		{"organization-required.json", "organization required:"},
+	}
+	for _, tc := range cases {
+		client, server := serveRPC(t, tc.fixture, nil, nil)
+		result, err := client.McpCall(context.Background(), "get_feature", map[string]any{"feature": "NOPE-999999"})
+		server.Close()
+		if err != nil {
+			t.Errorf("%s: want a result, got error %v", tc.fixture, err)
+			continue
+		}
+		if !result.IsError || !strings.HasPrefix(result.Text(), tc.prefix) {
+			t.Errorf("%s: result = %+v", tc.fixture, result)
+		}
+	}
+}
+
+// A JSON-RPC error object in a 200 is a protocol fault: an error, and a
+// distinct type from an HTTP refusal.
+func TestMcpJSONRPCErrorIsAnError(t *testing.T) {
+	client, server := serveRPC(t, "method-not-found.json", nil, nil)
+	defer server.Close()
+
+	result, err := client.McpCall(context.Background(), "get_feature", nil)
+	if result != nil {
+		t.Errorf("a protocol fault must not produce a result, got %+v", result)
+	}
+	rpcErr, ok := AsRPCError(err)
+	if !ok {
+		t.Fatalf("want *RPCError, got %T %v", err, err)
+	}
+	if rpcErr.Code != -32601 || rpcErr.Method != "tools/call" || !strings.Contains(rpcErr.Message, "does not implement") {
+		t.Errorf("rpc error = %+v", rpcErr)
+	}
+	if _, isHTTP := AsError(err); isHTTP {
+		t.Error("a JSON-RPC error must not masquerade as an HTTP error")
+	}
+}
+
+func TestMcpResponseForAnotherRequestIsRejected(t *testing.T) {
+	client, server := newTestClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(corpusBytes(t, "mcp-rpc", "tools-call.json")) // always id 1
+	}))
+	defer server.Close()
+
+	if _, err := client.McpCall(context.Background(), "list_projects", nil); err != nil {
+		t.Fatalf("first call carries id 1: %v", err)
+	}
+	if _, err := client.McpCall(context.Background(), "list_projects", nil); err == nil {
+		t.Error("an answer to request 1 must not be accepted for request 2")
+	}
+}
+
+// HTTP refusals still happen before JSON-RPC dispatch and keep their
+// *Error mapping.
+func TestMcpHTTPRefusalsStayContractErrors(t *testing.T) {
+	cases := []struct {
+		status     int
+		body       string
+		code       string
+		retryAfter string
+	}{
+		{401, string(corpusBytes(t, "errors", "unauthorized.json")), "unauthorized", ""},
+		{426, `{"error":"client 0.1.0 is below the minimum supported 1.0.0; upgrade: https://usefulcrum.ai/cli","code":"upgrade_required","min_client":"1.0.0"}`, "upgrade_required", ""},
+		{429, `{"error":"rate limited; retry after 60s","code":"rate_limited"}`, "rate_limited", "60"},
+	}
+	for _, tc := range cases {
+		client, server := newTestClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if tc.retryAfter != "" {
+				w.Header().Set("Retry-After", tc.retryAfter)
+			}
+			w.WriteHeader(tc.status)
+			fmt.Fprint(w, tc.body)
+		}))
+		_, err := client.McpTools(context.Background())
+		server.Close()
+
+		apiErr, ok := AsError(err)
+		if !ok {
+			t.Errorf("%d: want *Error, got %T %v", tc.status, err, err)
+			continue
+		}
+		if apiErr.Status != tc.status || apiErr.Code != tc.code || apiErr.RetryAfter != tc.retryAfter || apiErr.Path != "/mcp" {
+			t.Errorf("%d: error = %+v", tc.status, apiErr)
+		}
+	}
 }

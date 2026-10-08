@@ -208,7 +208,14 @@ func hasArgument(arguments map[string]any, key string) bool {
 // describeCallError turns a transport or contract failure into something the
 // model can act on. An expired token and an unreachable server call for
 // different next moves, and "call failed" tells it neither.
+//
+// A missing scope or organization never reaches here: POST /mcp reports those
+// as isError results, whose text already names the remedy.
 func describeCallError(name string, err error) string {
+	if rpcErr, ok := api.AsRPCError(err); ok {
+		return fmt.Sprintf("Fulcrum could not process the %s call (JSON-RPC error %d): %s",
+			name, rpcErr.Code, rpcErr.Message)
+	}
 	var apiErr *api.Error
 	if !errors.As(err, &apiErr) {
 		return fmt.Sprintf("could not reach Fulcrum to call %s: %v", name, err)
@@ -218,11 +225,6 @@ func describeCallError(name string, err error) string {
 	case "unauthorized":
 		return "this Fulcrum token is not valid any more — the user needs to mint a new one " +
 			"at /settings/developer and re-register the server."
-	case "insufficient_scope":
-		return fmt.Sprintf("this Fulcrum token may not call %s: %s", name, apiErr.ServerMessage)
-	case "organization_required":
-		return "this token belongs to several Fulcrum organizations and none was chosen; " +
-			"the user needs to set FULCRUM_ORG_ID."
 	case "rate_limited":
 		return "Fulcrum is rate limiting this token; wait a moment before trying again."
 	}

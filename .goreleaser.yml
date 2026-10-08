@@ -81,10 +81,23 @@ homebrew_casks:
     # Per-tool tap, matching what the org already does (homebrew-tokenizer) and
     # what the README already tells people to type:
     #   brew install headwayio/fulcrum/fulcrum
+    #
+    # Through a PULL REQUEST, not a push to main: the tap's SOC 2 ruleset
+    # requires a reviewed PR on its default branch, and v0.2.0's cask update
+    # was refused with a 409 when this pushed directly. The cask lands on a
+    # per-version branch, which the ruleset does not protect, and someone
+    # approves the PR to publish it to `brew upgrade`.
     repository:
       owner: headwayio
       name: homebrew-fulcrum
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+      branch: "fulcrum-{{ .Tag }}"
+      pull_request:
+        enabled: true
+        base:
+          owner: headwayio
+          name: homebrew-fulcrum
+          branch: main
     directory: Casks
     homepage: https://github.com/headwayio/fulcrum-cli
     # No `license:` here on purpose. GoReleaser ACCEPTS the key and silently

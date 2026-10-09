@@ -102,3 +102,63 @@ func TestStateIsWrittenPrivately(t *testing.T) {
 		t.Errorf("state file mode is %o, want 600", perm)
 	}
 }
+
+func TestSessionPinRoundTripsAndPrunes(t *testing.T) {
+	dir := t.TempDir()
+	pin := agenthook.SessionPin{Feature: "FUL-17", FeatureID: 1994, ProjectID: 24, Role: "Development", UpdatedAt: time.Now()}
+	if err := agenthook.WriteSessionPin(dir, "01a1/odd ref", pin); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got := agenthook.ReadSessionPin(dir, "01a1/odd ref")
+	if got == nil || got.FeatureID != 1994 || got.ProjectID != 24 || got.Role != "Development" {
+		t.Fatalf("pin did not survive: %+v", got)
+	}
+	if agenthook.ReadSessionPin(dir, "nobody") != nil {
+		t.Error("an unknown session must have no pin")
+	}
+
+	// A pin missing an id is useless to the hook and must read as absent.
+	path := filepath.Join(dir, agenthook.PinsDir, "broken.json")
+	if err := os.WriteFile(path, []byte(`{"feature":"FUL-9","feature_id":0,"project_id":24}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if agenthook.ReadSessionPin(dir, "broken") != nil {
+		t.Error("a pin without ids was returned")
+	}
+
+	agenthook.PruneSessionPins(dir, time.Now().Add(31*24*time.Hour))
+	if agenthook.ReadSessionPin(dir, "01a1/odd ref") != nil {
+		t.Error("a month-old pin was kept")
+	}
+}
+
+func TestSessionRefKeepsSubagentsApartFromTheirParent(t *testing.T) {
+	if got := agenthook.SessionRef("sess-1", ""); got != "sess-1" {
+		t.Errorf("main session: %q", got)
+	}
+	if got := agenthook.SessionRef("sess-1", "agent-9"); got != "sess-1/agent-9" {
+		t.Errorf("subagent: %q", got)
+	}
+	if got := agenthook.SessionRef("", "agent-9"); got != "" {
+		t.Errorf("an agent without a session is nothing to key on: %q", got)
+	}
+}
+
+func TestInjectSessionRefOnlyFillsABlankOnTheWorkTools(t *testing.T) {
+	amended, ok := agenthook.InjectSessionRef("mcp__fulcrum__start_work", map[string]any{"feature": "FUL-17"}, "sess-1")
+	if !ok || amended["session_ref"] != "sess-1" || amended["feature"] != "FUL-17" {
+		t.Errorf("start_work not amended: %v %v", ok, amended)
+	}
+	if _, ok := agenthook.InjectSessionRef("finish_work", map[string]any{}, "sess-1"); !ok {
+		t.Error("the bare tool name must be accepted too")
+	}
+	if _, ok := agenthook.InjectSessionRef("mcp__fulcrum__start_work", map[string]any{"session_ref": "chosen"}, "sess-1"); ok {
+		t.Error("a session the model named was overridden")
+	}
+	if _, ok := agenthook.InjectSessionRef("mcp__fulcrum__get_feature", map[string]any{}, "sess-1"); ok {
+		t.Error("a read-only tool was amended")
+	}
+	if _, ok := agenthook.InjectSessionRef("mcp__fulcrum__start_work", nil, "sess-1"); !ok {
+		t.Error("a call with no input at all should still be named")
+	}
+}

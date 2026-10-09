@@ -21,11 +21,29 @@ const maxTurnsPerRequest = 200
 // hookPayload is the JSON a harness writes to the hook's stdin. Only the
 // fields telemetry needs are decoded; the rest is ignored so a harness can
 // extend the shape without breaking us.
+//
+// Claude Code's SubagentStop carries the PARENT's session_id and
+// transcript_path, and names the subagent's own work in agent_id and
+// agent_transcript_path; PreToolUse inside a subagent carries agent_id too.
+// Both are what let a subagent's work be kept apart from its parent's.
 type hookPayload struct {
-	SessionID      string `json:"session_id"`
-	TranscriptPath string `json:"transcript_path"`
-	CWD            string `json:"cwd"`
-	HookEventName  string `json:"hook_event_name"`
+	SessionID           string         `json:"session_id"`
+	TranscriptPath      string         `json:"transcript_path"`
+	CWD                 string         `json:"cwd"`
+	HookEventName       string         `json:"hook_event_name"`
+	AgentID             string         `json:"agent_id"`
+	AgentTranscriptPath string         `json:"agent_transcript_path"`
+	ToolName            string         `json:"tool_name"`
+	ToolInput           map[string]any `json:"tool_input"`
+}
+
+// sessionRef names the work the payload is about: the session, or the
+// subagent within it.
+func (p hookPayload) sessionRef() string { return agenthook.SessionRef(p.SessionID, p.AgentID) }
+
+// transcript is the file holding that work's turns.
+func (p hookPayload) transcript() string {
+	return firstNonBlank(p.AgentTranscriptPath, p.TranscriptPath)
 }
 
 func (a *App) hookCmd() *cobra.Command {
@@ -38,7 +56,7 @@ func (a *App) hookCmd() *cobra.Command {
 			"OWN USAGE — no harness exposes token counts to the model it is running,\n" +
 			"so no MCP tool could ever carry them.",
 	}
-	cmd.AddCommand(a.hookStopCmd())
+	cmd.AddCommand(a.hookStopCmd(), a.hookToolUseCmd())
 	return cmd
 }
 
@@ -67,6 +85,58 @@ func (a *App) hookStopCmd() *cobra.Command {
 	return cmd
 }
 
+// hookToolUseCmd is Claude Code's PreToolUse hook. It exists for one reason:
+// the model does not know its own session id, and should not have to. When
+// a start_work or finish_work call goes by without a session_ref, the hook
+// fills it in from the payload, so the MCP bridge can pin the session to the
+// card — which is what keeps parallel subagents on their own cards.
+func (a *App) hookToolUseCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "tool-use",
+		Short: "Name the session on the start_work and finish_work calls an agent makes",
+		Long: "Reads a harness PreToolUse payload on stdin. When the tool is Fulcrum's\n" +
+			"start_work or finish_work and the call does not name a session_ref, it\n" +
+			"answers with the same call plus the session's own reference, so the work\n" +
+			"episode and the telemetry that follows are keyed by the session rather\n" +
+			"than by whichever card the checkout happens to be pinned to.\n\n" +
+			"Every other call, and every call that already names a session, is left\n" +
+			"exactly as it is: the hook prints nothing.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return a.runHookToolUse()
+		},
+	}
+	return cmd
+}
+
+// runHookToolUse NEVER FAILS THE SESSION, for the same reason runHookStop
+// does not: a PreToolUse hook that exits non-zero blocks the tool call.
+func (a *App) runHookToolUse() error {
+	payload := a.readHookPayload()
+	amended, ok := agenthook.InjectSessionRef(payload.ToolName, payload.ToolInput, payload.sessionRef())
+	if !ok {
+		return nil
+	}
+	// Claude Code's contract for changing a call: hookSpecificOutput with
+	// the amended input. The decision must be stated for the input to apply;
+	// "allow" is honest here, because these two tools only open and close a
+	// work episode.
+	answer := map[string]any{
+		"hookSpecificOutput": map[string]any{
+			"hookEventName":      "PreToolUse",
+			"permissionDecision": "allow",
+			"updatedInput":       amended,
+		},
+	}
+	encoded, err := json.Marshal(answer)
+	if err != nil {
+		fmt.Fprintf(a.Stderr, "fulcrum: could not encode the tool-use answer: %v\n", err)
+		return nil
+	}
+	fmt.Fprintln(a.Stdout, string(encoded))
+	return nil
+}
+
 // runHookStop NEVER FAILS THE SESSION.
 //
 // It returns nil on every path, including every error path, and says what
@@ -76,8 +146,8 @@ func (a *App) hookStopCmd() *cobra.Command {
 // silently look successful, hence the diagnostics.
 func (a *App) runHookStop(transcriptFlag, cwdFlag, sessionFlag string, dryRun bool) error {
 	payload := a.readHookPayload()
-	transcriptPath := firstNonBlank(transcriptFlag, payload.TranscriptPath)
-	sessionRef := firstNonBlank(sessionFlag, payload.SessionID)
+	transcriptPath := firstNonBlank(transcriptFlag, payload.transcript())
+	sessionRef := firstNonBlank(sessionFlag, payload.sessionRef())
 	workingDir := firstNonBlank(cwdFlag, payload.CWD)
 	if workingDir == "" {
 		workingDir, _ = os.Getwd()
@@ -92,13 +162,30 @@ func (a *App) runHookStop(transcriptFlag, cwdFlag, sessionFlag string, dryRun bo
 		return nil
 	}
 
-	// The pin is the only thing that knows which card this is about.
-	root, err := a.checkoutRoot(workingDir)
+	stateDir, err := a.configDir()
 	if err != nil {
 		fmt.Fprintf(a.Stderr, "fulcrum: %v\n", err)
 		return nil
 	}
-	work := projectctx.ReadCurrentWork(root)
+
+	// Which card: the session's own pin first — written by the MCP bridge
+	// when this session called start_work with its reference, which is what
+	// keeps parallel subagents on their own cards — then the checkout's.
+	var work *projectctx.CurrentWork
+	pinSource := "checkout"
+	if pin := agenthook.ReadSessionPin(stateDir, sessionRef); pin != nil {
+		pinSource = "session"
+		work = &projectctx.CurrentWork{
+			Feature: pin.Feature, FeatureID: pin.FeatureID, ProjectID: pin.ProjectID, Role: pin.Role,
+		}
+	} else {
+		root, err := a.checkoutRoot(workingDir)
+		if err != nil {
+			fmt.Fprintf(a.Stderr, "fulcrum: %v\n", err)
+			return nil
+		}
+		work = projectctx.ReadCurrentWork(root)
+	}
 	if work == nil {
 		// An ordinary state, and the acceptance criterion: record nothing
 		// rather than guess. Silent, because most checkouts are not pinned and
@@ -125,12 +212,8 @@ func (a *App) runHookStop(transcriptFlag, cwdFlag, sessionFlag string, dryRun bo
 		return nil
 	}
 
-	stateDir, err := a.configDir()
-	if err != nil {
-		fmt.Fprintf(a.Stderr, "fulcrum: %v\n", err)
-		return nil
-	}
 	state := agenthook.LoadState(stateDir)
+	agenthook.PruneSessionPins(stateDir, time.Now())
 	through := state.PostedThrough(sessionRef)
 
 	pending := make([]api.TelemetryTurn, 0, len(turns))
@@ -154,7 +237,7 @@ func (a *App) runHookStop(transcriptFlag, cwdFlag, sessionFlag string, dryRun bo
 	}
 
 	if dryRun {
-		a.reportDryRun(work, sessionRef, turns, pending)
+		a.reportDryRun(work, pinSource, sessionRef, turns, pending)
 		return nil
 	}
 	if len(pending) == 0 {
@@ -196,8 +279,8 @@ func (a *App) runHookStop(transcriptFlag, cwdFlag, sessionFlag string, dryRun bo
 	return nil
 }
 
-func (a *App) reportDryRun(work *projectctx.CurrentWork, sessionRef string, turns []agenthook.Turn, pending []api.TelemetryTurn) {
-	fmt.Fprintf(a.Stdout, "card:     %s (feature %d, project %d)\n", work.Feature, work.FeatureID, work.ProjectID)
+func (a *App) reportDryRun(work *projectctx.CurrentWork, pinSource, sessionRef string, turns []agenthook.Turn, pending []api.TelemetryTurn) {
+	fmt.Fprintf(a.Stdout, "card:     %s (feature %d, project %d) via the %s pin\n", work.Feature, work.FeatureID, work.ProjectID, pinSource)
 	fmt.Fprintf(a.Stdout, "session:  %s\n", sessionRef)
 	fmt.Fprintf(a.Stdout, "turns:    %d in the transcript, %d not yet recorded\n", len(turns), len(pending))
 

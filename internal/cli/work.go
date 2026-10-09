@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -139,7 +138,7 @@ func (a *App) runWork(feature, role, harness, dir string, noLaunch, withoutEstim
 		return err
 	}
 
-	name := featureName(brief.Text())
+	name := projectctx.FeatureName(brief.Text())
 	work := &projectctx.CurrentWork{
 		Feature: feature,
 		Name:    name,
@@ -147,7 +146,7 @@ func (a *App) runWork(feature, role, harness, dir string, noLaunch, withoutEstim
 		// telemetry hook needs them and cannot go and ask: it fires on its own
 		// and has no way to turn "FUL-17" into a row. Taking them here costs
 		// nothing, because the brief has just been fetched.
-		FeatureID: briefID(brief.Text(), "feature_id"),
+		FeatureID: projectctx.BriefID(brief.Text(), "feature_id"),
 		ProjectID: projectID,
 		Role:      role,
 		StartedAt: time.Now().UTC().Format(time.RFC3339),
@@ -248,7 +247,7 @@ func (a *App) launch(harness, root, prompt string) error {
 // the brief names — project ids are unique across Fulcrum, and the server
 // only answers for the caller's own organization.
 func workProject(local *projectctx.Local, feature, brief string) (int64, error) {
-	cardProject := briefID(brief, "project_id")
+	cardProject := projectctx.BriefID(brief, "project_id")
 
 	if local == nil {
 		if cardProject == 0 {
@@ -264,9 +263,9 @@ func workProject(local *projectctx.Local, feature, brief string) (int64, error) 
 			"%s belongs to %s (project %d), but this checkout is linked to %s (project %d).\n"+
 				"Nothing was changed. Work it from a checkout of %s, or relink this one with\n"+
 				"`fulcrum context --project %d`.",
-			feature, projectLabel(briefField(brief, "project")), cardProject,
+			feature, projectLabel(projectctx.BriefField(brief, "project")), cardProject,
 			projectLabel(local.ProjectName), local.ProjectID,
-			projectLabel(briefField(brief, "project")), cardProject)
+			projectLabel(projectctx.BriefField(brief, "project")), cardProject)
 	}
 	return local.ProjectID, nil
 }
@@ -287,49 +286,6 @@ func (a *App) checkoutRoot(dir string) (string, error) {
 		return local.Root, nil
 	}
 	return absolute, nil
-}
-
-// featureName lifts the card's name out of the brief's heading, which reads
-// "# FUL-17 — Dynamic field mapping". Best effort: the pin is still useful
-// with only the id.
-func featureName(brief string) string {
-	for _, line := range strings.Split(brief, "\n") {
-		if !strings.HasPrefix(line, "# ") {
-			continue
-		}
-		heading := strings.TrimPrefix(line, "# ")
-		if _, after, found := strings.Cut(heading, "—"); found {
-			return strings.TrimSpace(after)
-		}
-		return strings.TrimSpace(heading)
-	}
-	return ""
-}
-
-// briefID reads a numeric field out of the brief's YAML frontmatter. Best
-// effort by design: a brief that has not got the field yet leaves the pin
-// without it, and the hook says so rather than posting against a guess.
-func briefID(brief, key string) int64 {
-	id, err := strconv.ParseInt(briefField(brief, key), 10, 64)
-	if err != nil {
-		return 0
-	}
-	return id
-}
-
-// briefField reads a field out of the brief's YAML frontmatter, or "".
-func briefField(brief, key string) string {
-	for _, line := range strings.Split(brief, "\n") {
-		if line == "---" && strings.HasPrefix(brief, "---") {
-			continue
-		}
-		name, value, found := strings.Cut(line, ":")
-		if !found || strings.TrimSpace(name) != key {
-			continue
-		}
-		return strings.TrimSpace(value)
-	}
-	return ""
 }
 
 func suffix(name string) string {

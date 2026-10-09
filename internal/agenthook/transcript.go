@@ -46,50 +46,121 @@ type Turn struct {
 // the grain Fulcrum records. Separating them would be guessing.
 func (t Turn) Duration() time.Duration { return t.EndedAt.Sub(t.StartedAt) }
 
+// transcriptRecord is one JSONL line from either harness. Claude Code puts the
+// speaker in Type ("user" / "assistant"); OMP writes Type "message" and puts
+// the speaker in Message.Role ("user" / "assistant" / "toolResult"). The
+// struct carries both so one decode serves both; classify decides what a
+// record means.
 type transcriptRecord struct {
-	Type      string         `json:"type"`
+	Type string `json:"type"`
+	// ID is OMP's record id: one record per model response, so it is the
+	// dedupe key there. Claude Code keys responses by Message.ID instead.
+	ID        string         `json:"id"`
 	Timestamp string         `json:"timestamp"`
 	Message   *transcriptMsg `json:"message"`
 }
 
 type transcriptMsg struct {
 	ID      string          `json:"id"`
+	Role    string          `json:"role"`
 	Model   string          `json:"model"`
 	Usage   *transcriptUse  `json:"usage"`
 	Content json.RawMessage `json:"content"`
 }
 
+// transcriptUse carries both harnesses' spellings of the same four numbers.
+// Only one set is ever populated per record, so summing both is safe.
 type transcriptUse struct {
+	// Claude Code
 	InputTokens              int64 `json:"input_tokens"`
 	OutputTokens             int64 `json:"output_tokens"`
 	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	// OMP
+	Input      int64 `json:"input"`
+	Output     int64 `json:"output"`
+	CacheRead  int64 `json:"cacheRead"`
+	CacheWrite int64 `json:"cacheWrite"`
 }
 
-// ParseClaudeTranscript reads a Claude Code transcript (JSONL) into turns.
+// recordKind is what one transcript line means to turn accounting.
+type recordKind int
+
+const (
+	kindOther     recordKind = iota // session metadata, tool output, custom entries
+	kindAssistant                   // the model said something; carries usage
+	kindInput                       // someone handed the agent new work
+)
+
+// classify maps a record from either harness onto the two things the parser
+// cares about. Claude Code reports tool output as a "user" record whose
+// content holds tool_result blocks; OMP gives it its own role, so no content
+// inspection is needed there.
+func classify(record transcriptRecord) recordKind {
+	switch record.Type {
+	case "assistant":
+		return kindAssistant
+	case "user":
+		if isToolResult(record.Message) {
+			return kindOther
+		}
+		return kindInput
+	case "message":
+		if record.Message == nil {
+			return kindOther
+		}
+		switch record.Message.Role {
+		case "assistant":
+			return kindAssistant
+		case "user":
+			return kindInput
+		}
+	}
+	return kindOther
+}
+
+// responseKey identifies one model response so its usage is counted once:
+// Claude Code repeats Message.ID across the records of a response; OMP writes
+// one record per response with its own ID. An empty key means the record
+// cannot be deduped and is counted as it stands.
+func responseKey(record transcriptRecord) string {
+	if record.Message != nil && record.Message.ID != "" {
+		return "message:" + record.Message.ID
+	}
+	if record.ID != "" {
+		return "record:" + record.ID
+	}
+	return ""
+}
+
+// ParseTranscript reads a harness transcript (JSONL) into turns. Two shapes
+// are understood and may not be mixed in one file: Claude Code's, and OMP's
+// (see transcriptRecord). Both are detected per record, so nothing has to be
+// told which harness wrote the file.
 //
 // TWO CORRECTNESS TRAPS LIVE HERE, and both silently produce plausible
 // numbers rather than errors:
 //
-//  1. ONE MODEL RESPONSE IS WRITTEN AS SEVERAL RECORDS — one per content
-//     block — and every one of them repeats the SAME usage object. Summing
-//     per record inflates the headline number; measured on a real 471-call
-//     session it overstated output tokens by 2.55x. Usage is therefore
-//     counted once per message id, and the id set is global rather than
-//     per-turn, because a response can straddle a turn boundary.
+//  1. ONE MODEL RESPONSE CAN BE WRITTEN AS SEVERAL RECORDS — Claude Code
+//     writes one per content block — and every one of them repeats the SAME
+//     usage object. Summing per record inflates the headline number; measured
+//     on a real 471-call session it overstated output tokens by 2.55x. Usage
+//     is therefore counted once per response key (see responseKey), and the
+//     key set is global rather than per-turn, because a response can straddle
+//     a turn boundary.
 //
 //  2. A TURN IS NOT A MODEL REQUEST. A single prompt produces many requests
 //     as the agent calls tools and reads the results. Recording each request
 //     as a turn would push all tool-execution time into the gaps BETWEEN
 //     turns, where it reads as human-away time and vanishes from active time.
 //     So a turn runs from the input that woke the agent to the last thing it
-//     said before stopping, and only a non-tool-result message starts a new
-//     one.
+//     said before stopping, and only new input — never tool output — starts
+//     a new one.
 //
 // Malformed lines are skipped rather than failing the parse: a transcript is
 // something the harness owns and may extend, and a hook that dies on an
 // unfamiliar record would take the whole session's telemetry with it.
-func ParseClaudeTranscript(r io.Reader) ([]Turn, error) {
+func ParseTranscript(r io.Reader) ([]Turn, error) {
 	reader := bufio.NewReader(r)
 
 	var (
@@ -117,8 +188,8 @@ func ParseClaudeTranscript(r io.Reader) ([]Turn, error) {
 			if ok {
 				stamp, haveStamp := parseStamp(record.Timestamp)
 
-				switch {
-				case record.Type == "assistant":
+				switch classify(record) {
+				case kindAssistant:
 					if current == nil {
 						// The turn starts when the agent was handed its input,
 						// not when it produced its first block — otherwise the
@@ -132,16 +203,19 @@ func ParseClaudeTranscript(r io.Reader) ([]Turn, error) {
 					if haveStamp && stamp.After(current.EndedAt) {
 						current.EndedAt = stamp
 					}
-					if record.Message != nil && !counted[record.Message.ID] {
-						counted[record.Message.ID] = true
+					key := responseKey(record)
+					if record.Message != nil && (key == "" || !counted[key]) {
+						if key != "" {
+							counted[key] = true
+						}
 						current.Calls++
 						addUsage(&current.Usage, record.Message)
 					}
 
-				case record.Type == "user" && !isToolResult(record.Message):
-					// New input, so whatever the agent was doing is over. A
-					// tool result is NOT new input — it is the agent's own
-					// work coming back to it.
+				case kindInput:
+					// New input, so whatever the agent was doing is over. Tool
+					// output is NOT new input — it is the agent's own work
+					// coming back to it — and classify never reports it here.
 					closeTurn()
 				}
 
@@ -188,10 +262,10 @@ func addUsage(into *Usage, message *transcriptMsg) {
 	if message.Usage == nil {
 		return
 	}
-	into.InputTokens += message.Usage.InputTokens
-	into.OutputTokens += message.Usage.OutputTokens
-	into.CacheCreationTokens += message.Usage.CacheCreationInputTokens
-	into.CacheReadTokens += message.Usage.CacheReadInputTokens
+	into.InputTokens += message.Usage.InputTokens + message.Usage.Input
+	into.OutputTokens += message.Usage.OutputTokens + message.Usage.Output
+	into.CacheCreationTokens += message.Usage.CacheCreationInputTokens + message.Usage.CacheWrite
+	into.CacheReadTokens += message.Usage.CacheReadInputTokens + message.Usage.CacheRead
 }
 
 // isToolResult reports whether a user record is the agent's own tool output

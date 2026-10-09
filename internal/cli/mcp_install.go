@@ -17,14 +17,15 @@ func (a *App) mcpInstallCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Register `fulcrum mcp` with the coding harnesses in this project",
-		Long: "Writes the Model Context Protocol server entry so Claude Code, Codex and\n" +
-			"Kimi Code can reach Fulcrum from this checkout, and registers the hook\n" +
-			"that records what an agent spends on a card.\n\n" +
-			"All three entries are PROJECT-scoped (.mcp.json, .codex/config.toml and\n" +
-			".kimi-code/mcp.json), so a teammate who clones the repository gets the\n" +
-			"server without setting anything up. The telemetry hook is deliberately\n" +
-			"NOT shared that way — it goes in .claude/settings.local.json, because it\n" +
-			"names this machine's own binary.\n\n" +
+		Long: "Writes the Model Context Protocol server entry so Claude Code, Codex,\n" +
+			"Kimi Code and OMP can reach Fulcrum from this checkout, and registers the\n" +
+			"hook that records what an agent spends on a card.\n\n" +
+			"The server entries are PROJECT-scoped (.mcp.json, which OMP reads too,\n" +
+			".codex/config.toml and .kimi-code/mcp.json), so a teammate who clones the\n" +
+			"repository gets the server without setting anything up. The telemetry\n" +
+			"hooks are deliberately NOT shared that way — Claude Code's goes in\n" +
+			".claude/settings.local.json and OMP's in ~/.omp/agent/hooks/post/ —\n" +
+			"because they name this machine's own binary.\n\n" +
 			"An entry that already exists is left exactly as it is.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {

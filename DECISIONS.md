@@ -83,6 +83,41 @@ command records nothing. The MCP server entry for OMP is the existing
 `.mcp.json`, which OMP reads as its portable fallback; writing
 `.omp/mcp.json` too would register the server twice.
 
-The factory records on `session_stop`, which OMP awaits before the turn
-settles — the same moment Claude Code's Stop fires, with the transcript
-complete.
+Two events because OMP fires them differently per session kind:
+`session_stop` for the main session (awaited before settle, so the
+transcript is complete; never fires for subagents) and `agent_end` for
+subagent sessions, whose transcripts sit inside the parent's session
+directory under the agent's name. A subagent's whole assignment is one turn,
+which is what it is: one prompt, one hand-back.
+
+## 2026-10-09 — Telemetry follows the session, with the checkout pin as fallback
+
+The checkout pin is one card per checkout: right for a developer at a
+keyboard, wrong the moment a session fans work out to subagents that each
+pick up a card, because they all share the checkout. So `start_work` now
+pins the SESSION: when it passes through the MCP bridge carrying a
+`session_ref`, the bridge fetches the card's brief (as `fulcrum work` does)
+and writes `<config dir>/session-pins/<ref>.json` with the numeric ids and
+role; `fulcrum hook stop` reads that pin for the transcript's session id
+before falling back to the checkout's. One file per session because several
+bridges and hooks run at once; written whole and renamed so a hook never
+reads a torn pin.
+
+The model does not know its own session id, and should not have to. The OMP
+hook factory fills `session_ref` into `start_work` / `finish_work` calls
+from `ctx.sessionManager.getSessionId()` when the model left it blank, and
+keeps one the model named. The pin is never cleared by `finish_work` — the
+turn that called it is still being written when the hook fires — and is
+replaced by the session's next `start_work`.
+
+Claude Code gets the same two halves through its own hooks. `SubagentStop`
+carries the parent's session_id plus the subagent's agent_id and
+agent_transcript_path — verified against real payloads on 2026-10-09 — so
+`hook stop` reads the subagent's file and records it under
+"<session_id>/<agent_id>", the ref `SessionRef` builds; a subagent's
+PreToolUse payload carries the same agent_id, so `hook tool-use` names the
+call identically and the pin and the transcript meet. The PreToolUse
+answer uses Claude Code's `updatedInput` contract with `permissionDecision:
+"allow"`, which is honest for the two tools it is narrowed to: they only
+open and close a work episode. Codex and Kimi remain declined for
+telemetry; nothing here changes what they record, which is nothing.

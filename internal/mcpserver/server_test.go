@@ -9,6 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/headwayio/fulcrum-cli/internal/agenthook"
 	"github.com/headwayio/fulcrum-cli/internal/api"
 	"github.com/headwayio/fulcrum-cli/internal/mcpserver"
 	"github.com/headwayio/fulcrum-cli/internal/projectctx"
@@ -20,6 +21,8 @@ type fakeDeps struct {
 	calls  []recordedCall
 	result *api.ToolResult
 	err    error
+	// replies, when set, answers a tool by name instead of the generic text.
+	replies map[string]string
 }
 
 type recordedCall struct {
@@ -38,6 +41,9 @@ func (f *fakeDeps) McpCall(_ context.Context, name string, arguments map[string]
 	}
 	if f.result != nil {
 		return f.result, nil
+	}
+	if reply, ok := f.replies[name]; ok {
+		return &api.ToolResult{Content: []api.ToolContent{{Type: "text", Text: reply}}}, nil
 	}
 	return &api.ToolResult{Content: []api.ToolContent{{Type: "text", Text: "served " + name}}}, nil
 }
@@ -82,9 +88,16 @@ func linkedCheckout(t *testing.T) string {
 // assertions run through actual protocol traffic rather than direct calls.
 func connect(t *testing.T, deps mcpserver.Deps, workingDir string) *mcp.ClientSession {
 	t.Helper()
+	return connectWithPins(t, deps, workingDir, "")
+}
+
+// connectWithPins also hands the bridge a config dir, where start_work pins
+// land.
+func connectWithPins(t *testing.T, deps mcpserver.Deps, workingDir, pinDir string) *mcp.ClientSession {
+	t.Helper()
 	ctx := context.Background()
 
-	server, err := mcpserver.New(ctx, "test", deps, workingDir)
+	server, err := mcpserver.New(ctx, "test", deps, workingDir, pinDir)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -309,5 +322,75 @@ func TestWhereAmIIsQuietWhenNothingIsPinned(t *testing.T) {
 	text, _ := callText(t, session, "where_am_i", map[string]any{})
 	if strings.Contains(text, "Currently working") {
 		t.Errorf("claimed a pin that does not exist: %s", text)
+	}
+}
+
+func workCatalogue() []api.ToolDefinition {
+	return append(catalogue(),
+		api.ToolDefinition{Name: "start_work", Description: "opens an episode", InputSchema: map[string]any{
+			"type": "object", "properties": map[string]any{"feature": map[string]any{"type": "string"}}, "required": []any{"feature"},
+		}},
+		api.ToolDefinition{Name: "get_feature", Description: "brief", InputSchema: map[string]any{
+			"type": "object", "properties": map[string]any{"feature": map[string]any{"type": "string"}}, "required": []any{"feature"},
+		}},
+	)
+}
+
+const briefForPin = "---\nname: feature-brief\nproject: Embr - MVP\nproject_id: 24\nfeature: FUL-17\nfeature_id: 1994\n---\n\n# FUL-17 — Dynamic field mapping\n"
+
+// A session that names itself when it starts work is pinned by that name, so
+// the telemetry hook can put its turns on this card even when the checkout is
+// pinned to another one — which is how parallel subagents stay apart.
+func TestStartWorkWithASessionRefPinsTheSession(t *testing.T) {
+	deps := &fakeDeps{tools: workCatalogue(), replies: map[string]string{
+		"start_work":  "Started episode 3 on feature 1994 as Development. Call finish_work when you stop.",
+		"get_feature": briefForPin,
+	}}
+	pinDir := t.TempDir()
+	session := connectWithPins(t, deps, linkedCheckout(t), pinDir)
+
+	text, isError := callText(t, session, "start_work", map[string]any{"feature": "FUL-17", "session_ref": "sess-a"})
+	if isError || !strings.Contains(text, "Started episode") {
+		t.Fatalf("start_work reply lost: %q (error=%v)", text, isError)
+	}
+
+	pin := agenthook.ReadSessionPin(pinDir, "sess-a")
+	if pin == nil {
+		t.Fatal("no session pin was written")
+	}
+	if pin.FeatureID != 1994 || pin.ProjectID != 24 || pin.Feature != "FUL-17" {
+		t.Errorf("pin carries the wrong ids: %+v", pin)
+	}
+	if pin.Role != "Development" {
+		t.Errorf("role should come from the server's reply when the call left it out: %q", pin.Role)
+	}
+}
+
+func TestStartWorkWithoutASessionRefLeavesTheCheckoutPinInCharge(t *testing.T) {
+	deps := &fakeDeps{tools: workCatalogue(), replies: map[string]string{"start_work": "Started episode 1 on feature 1994 as Development.", "get_feature": briefForPin}}
+	pinDir := t.TempDir()
+	session := connectWithPins(t, deps, linkedCheckout(t), pinDir)
+
+	callText(t, session, "start_work", map[string]any{"feature": "FUL-17"})
+
+	if entries, _ := os.ReadDir(filepath.Join(pinDir, agenthook.PinsDir)); len(entries) != 0 {
+		t.Errorf("a pin was written with nothing to key it on: %v", entries)
+	}
+	for _, call := range deps.calls {
+		if call.name == "get_feature" {
+			t.Error("the brief was fetched although no pin could be written")
+		}
+	}
+}
+
+func TestAFailedStartWorkPinsNothing(t *testing.T) {
+	deps := &fakeDeps{tools: workCatalogue(), err: &api.Error{Code: "insufficient_scope", ServerMessage: "no"}}
+	pinDir := t.TempDir()
+	session := connectWithPins(t, deps, linkedCheckout(t), pinDir)
+
+	callText(t, session, "start_work", map[string]any{"feature": "FUL-17", "session_ref": "sess-b"})
+
+	if agenthook.ReadSessionPin(pinDir, "sess-b") != nil {
+		t.Error("a session was pinned to work that never started")
 	}
 }

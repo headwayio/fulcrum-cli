@@ -119,7 +119,7 @@ func (a *App) runHookStop(transcriptFlag, cwdFlag, sessionFlag string, dryRun bo
 	}
 	defer file.Close()
 
-	turns, err := agenthook.ParseClaudeTranscript(file)
+	turns, err := agenthook.ParseTranscript(file)
 	if err != nil {
 		fmt.Fprintf(a.Stderr, "fulcrum: cannot parse the transcript: %v\n", err)
 		return nil

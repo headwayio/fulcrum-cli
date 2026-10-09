@@ -39,11 +39,29 @@ func itoa(v int64) string {
 
 func parse(t *testing.T, lines ...string) []agenthook.Turn {
 	t.Helper()
-	turns, err := agenthook.ParseClaudeTranscript(strings.NewReader(strings.Join(lines, "\n") + "\n"))
+	turns, err := agenthook.ParseTranscript(strings.NewReader(strings.Join(lines, "\n") + "\n"))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	return turns
+}
+
+// OMP writes one record per model response, keyed by the record id, with the
+// speaker in message.role and usage under its own names.
+func ompAssistant(stamp, id string, output int64) string {
+	return `{"type":"message","id":"` + id + `","timestamp":"` + stamp +
+		`","message":{"role":"assistant","model":"claude-opus-5","usage":{"input":10,"output":` +
+		itoa(output) + `,"cacheRead":7,"cacheWrite":5,"totalTokens":0}}}`
+}
+
+func ompPrompt(stamp, id string) string {
+	return `{"type":"message","id":"` + id + `","timestamp":"` + stamp +
+		`","message":{"role":"user","content":[{"type":"text","text":"go"}]}}`
+}
+
+func ompToolResult(stamp, id string) string {
+	return `{"type":"message","id":"` + id + `","timestamp":"` + stamp +
+		`","message":{"role":"toolResult","toolName":"bash","content":[{"type":"text","text":"ok"}]}}`
 }
 
 // THE trap. One model response is written as several records, each repeating
@@ -199,5 +217,57 @@ func TestAVeryLongRecordIsRead(t *testing.T) {
 
 	if len(turns) != 1 || turns[0].Usage.OutputTokens != 10 {
 		t.Fatalf("a long line broke the parse: %d turns", len(turns))
+	}
+}
+
+// OMP's transcript carries the speaker in message.role rather than the record
+// type, gives tool output its own role, and surrounds the exchange with
+// session metadata. None of that may change the turn arithmetic.
+func TestOMPTranscriptIsReadByRole(t *testing.T) {
+	turns := parse(t,
+		`{"type":"session","version":3,"id":"01a1","timestamp":"2026-10-09T15:45:12.096Z","cwd":"/repo"}`,
+		`{"type":"model_change","id":"aa","timestamp":"2026-10-09T15:45:12.100Z"}`,
+		ompPrompt("2026-10-09T15:45:13.000Z", "p1"),
+		ompAssistant("2026-10-09T15:45:16.000Z", "r1", 100),
+		ompToolResult("2026-10-09T15:45:20.000Z", "t1"),
+		`{"type":"custom","id":"c1","timestamp":"2026-10-09T15:45:21.000Z","customType":"x"}`,
+		ompAssistant("2026-10-09T15:45:30.000Z", "r2", 40),
+		ompPrompt("2026-10-09T15:50:00.000Z", "p2"),
+		ompAssistant("2026-10-09T15:50:05.000Z", "r3", 1),
+	)
+
+	if len(turns) != 2 {
+		t.Fatalf("expected two turns (tool output and metadata do not split one), got %d", len(turns))
+	}
+	first := turns[0]
+	if first.Calls != 2 || first.Usage.OutputTokens != 140 {
+		t.Errorf("first turn should sum both responses: calls=%d output=%d", first.Calls, first.Usage.OutputTokens)
+	}
+	if got := first.Duration(); got != 17*time.Second {
+		t.Errorf("turn should run from the prompt to the last response: got %s, want 17s", got)
+	}
+	if first.Usage.InputTokens != 20 || first.Usage.CacheReadTokens != 14 || first.Usage.CacheCreationTokens != 10 {
+		t.Errorf("OMP usage names not mapped: input=%d cacheRead=%d cacheWrite=%d",
+			first.Usage.InputTokens, first.Usage.CacheReadTokens, first.Usage.CacheCreationTokens)
+	}
+	if first.Usage.Model != "claude-opus-5" {
+		t.Errorf("model not carried from an OMP record: %q", first.Usage.Model)
+	}
+	if turns[1].Index != 2 || turns[1].Usage.OutputTokens != 1 {
+		t.Errorf("second turn wrong: index=%d output=%d", turns[1].Index, turns[1].Usage.OutputTokens)
+	}
+}
+
+// An OMP record that is re-read (a hook firing twice over an append-only file)
+// is the same response, so its id must dedupe it exactly as Claude Code's
+// message id does.
+func TestOMPResponsesAreCountedOncePerRecordID(t *testing.T) {
+	turns := parse(t,
+		ompPrompt("2026-10-09T15:45:13.000Z", "p1"),
+		ompAssistant("2026-10-09T15:45:16.000Z", "r1", 100),
+		ompAssistant("2026-10-09T15:45:16.000Z", "r1", 100),
+	)
+	if len(turns) != 1 || turns[0].Usage.OutputTokens != 100 || turns[0].Calls != 1 {
+		t.Fatalf("duplicate OMP record was counted twice: %+v", turns)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,6 +22,20 @@ var harnessCommands = map[string]string{
 	mcpinstall.TargetClaude: "claude",
 	mcpinstall.TargetCodex:  "codex",
 	mcpinstall.TargetKimi:   "kimi",
+	// OMP takes the starter prompt as its first positional message, the
+	// same way the other three do.
+	mcpinstall.TargetOmp: "omp",
+}
+
+// knownHarnesses lists the launchable harnesses for help and error text, so
+// the two never disagree with the table.
+func knownHarnesses() string {
+	names := make([]string, 0, len(harnessCommands))
+	for name := range harnessCommands {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }
 
 func (a *App) workCmd() *cobra.Command {
@@ -56,7 +71,7 @@ func (a *App) workCmd() *cobra.Command {
 	cmd.Flags().StringVar(&feature, "feature", "", "card to work, e.g. FUL-17")
 	cmd.Flags().StringVar(&role, "role", "", "role you are working as; defaults to the card's dominant estimate")
 	cmd.Flags().StringVar(&harness, "harness", mcpinstall.TargetClaude,
-		"harness to launch (claude, codex, kimi)")
+		"harness to launch ("+knownHarnesses()+")")
 	cmd.Flags().StringVar(&dir, "dir", ".", "checkout to work in")
 	cmd.Flags().BoolVar(&noLaunch, "no-launch", false, "pin the card and print the prompt, but launch nothing")
 	cmd.Flags().BoolVar(&withoutEstimates, "without-estimates", false,
@@ -211,7 +226,7 @@ func (a *App) ensureRegistered(root, harness string) error {
 func (a *App) launch(harness, root, prompt string) error {
 	command, known := harnessCommands[harness]
 	if !known {
-		return exitf(ExitError, "unknown harness %q — known: claude, codex, kimi", harness)
+		return exitf(ExitError, "unknown harness %q — known: %s", harness, knownHarnesses())
 	}
 	path, err := exec.LookPath(command)
 	if err != nil {

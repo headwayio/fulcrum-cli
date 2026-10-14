@@ -15,8 +15,9 @@ import (
 )
 
 // maxTurnsPerRequest mirrors the server's own cap. Batching here rather than
-// discovering the limit as a 422 keeps a long session working.
-const maxTurnsPerRequest = 200
+// discovering the limit as a 422 keeps a long session working. A variable
+// only so tests can make a short transcript span several batches.
+var maxTurnsPerRequest = 200
 
 // hookPayload is the JSON a harness writes to the hook's stdin. Only the
 // fields telemetry needs are decoded; the rest is ignored so a harness can

@@ -74,8 +74,9 @@ func (p SessionPin) Covers(turn Turn) bool {
 }
 
 // Names reports whether a feature reference, as a model passed it to
-// finish_work, is the card this pin is for: the reference start_work was
-// given, in any case, or the card's numeric id.
+// finish_work, is the card this pin is for: its short id ("FUL-17"), in any
+// case, or its numeric id ("1994"). The bridge stores the short id from the
+// card's brief, so a start in one form and a finish in the other still match.
 func (p SessionPin) Names(feature string) bool {
 	feature = strings.TrimSpace(feature)
 	return feature != "" &&
@@ -96,13 +97,31 @@ func WriteSessionPin(dir, sessionRef string, pin SessionPin) error {
 	if err != nil {
 		return err
 	}
-	// Written whole then renamed, so a hook reading mid-write never sees a
-	// torn file and falls back to the wrong card.
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(encoded, '\n'), 0o644); err != nil {
+	// Written whole to a temp file of its own, then renamed, so a hook
+	// reading mid-write never sees a torn file and two writers never share
+	// one half-written temp file.
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if _, err := tmp.Write(append(encoded, '\n')); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	return nil
 }
 
 // ReadSessionPin returns the card a session is working, or nil when the

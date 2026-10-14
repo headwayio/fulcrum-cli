@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -23,19 +24,63 @@ import (
 //
 // ONE FILE PER SESSION, not a map in the watermark file: several bridges and
 // hooks run at once when subagents work in parallel, and a shared file would
-// lose writes. A pin is never cleared by finish_work, because the turn that
-// called it is still being written when the hook fires; it is replaced by the
-// session's next start_work, and forgotten with the watermark after a month.
+// lose writes.
+//
+// A PIN IS A WINDOW. One session can work several cards in turn — an
+// orchestrator opens a QA episode on one card mid-session, finishes it, and
+// moves on — so a pin claims only the turns between its start_work
+// (StartedAt) and its finish_work (FinishedAt), not the session's whole
+// history before it or everything after it. finish_work does not delete the
+// pin, because the turn that called it is still being written when the hook
+// fires and must still post; it closes the window instead. The pin is
+// replaced by the session's next start_work, and forgotten with the
+// watermark after a month.
 const PinsDir = "session-pins"
 
 // SessionPin is what the hook needs to post a session's turns: the numeric
-// ids, because it fires on its own and cannot turn "FUL-17" into a row.
+// ids, because it fires on its own and cannot turn "FUL-17" into a row, and
+// the window those turns must fall in.
+//
+// A zero StartedAt or FinishedAt leaves that side of the window open. A pin
+// written by a bridge that predates windows has neither, and claims every
+// turn the session has not yet posted, exactly as it always did.
 type SessionPin struct {
-	Feature   string    `json:"feature"`
-	FeatureID int64     `json:"feature_id"`
-	ProjectID int64     `json:"project_id"`
-	Role      string    `json:"role,omitempty"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Feature    string    `json:"feature"`
+	FeatureID  int64     `json:"feature_id"`
+	ProjectID  int64     `json:"project_id"`
+	Role       string    `json:"role,omitempty"`
+	StartedAt  time.Time `json:"started_at,omitzero"`
+	FinishedAt time.Time `json:"finished_at,omitzero"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// Windowed reports whether the pin bounds the turns it claims at all.
+func (p SessionPin) Windowed() bool {
+	return !p.StartedAt.IsZero() || !p.FinishedAt.IsZero()
+}
+
+// Covers reports whether a turn overlaps the pin's window. Overlap, not
+// containment: the turn that called start_work began before the pin existed
+// and ends after it, and the turn that called finish_work began before the
+// window closed; both are the card's work.
+func (p SessionPin) Covers(turn Turn) bool {
+	if !p.StartedAt.IsZero() && turn.EndedAt.Before(p.StartedAt) {
+		return false
+	}
+	if !p.FinishedAt.IsZero() && turn.StartedAt.After(p.FinishedAt) {
+		return false
+	}
+	return true
+}
+
+// Names reports whether a feature reference, as a model passed it to
+// finish_work, is the card this pin is for: its short id ("FUL-17"), in any
+// case, or its numeric id ("1994"). The bridge stores the short id from the
+// card's brief, so a start in one form and a finish in the other still match.
+func (p SessionPin) Names(feature string) bool {
+	feature = strings.TrimSpace(feature)
+	return feature != "" &&
+		(strings.EqualFold(feature, p.Feature) || feature == strconv.FormatInt(p.FeatureID, 10))
 }
 
 // WriteSessionPin records the card a session is working, replacing any
@@ -52,13 +97,31 @@ func WriteSessionPin(dir, sessionRef string, pin SessionPin) error {
 	if err != nil {
 		return err
 	}
-	// Written whole then renamed, so a hook reading mid-write never sees a
-	// torn file and falls back to the wrong card.
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(encoded, '\n'), 0o644); err != nil {
+	// Written whole to a temp file of its own, then renamed, so a hook
+	// reading mid-write never sees a torn file and two writers never share
+	// one half-written temp file.
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if _, err := tmp.Write(append(encoded, '\n')); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	return nil
 }
 
 // ReadSessionPin returns the card a session is working, or nil when the
@@ -78,6 +141,23 @@ func ReadSessionPin(dir, sessionRef string) *SessionPin {
 		return nil
 	}
 	return &pin
+}
+
+// FinishSessionPin closes the window of a session's pin when finish_work
+// names the card it is for, and reports whether it did. A finish_work for
+// any other card leaves the pin alone: closing it would stop the session's
+// own card from being recorded on the strength of somebody else's episode.
+func FinishSessionPin(dir, sessionRef, feature string, now time.Time) (bool, error) {
+	pin := ReadSessionPin(dir, sessionRef)
+	if pin == nil || !pin.Names(feature) {
+		return false, nil
+	}
+	pin.FinishedAt = now.UTC()
+	pin.UpdatedAt = now.UTC()
+	if err := WriteSessionPin(dir, sessionRef, *pin); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // PruneSessionPins forgets pins nothing has refreshed in a month, on the

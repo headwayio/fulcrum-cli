@@ -108,7 +108,8 @@ hook factory fills `session_ref` into `start_work` / `finish_work` calls
 from `ctx.sessionManager.getSessionId()` when the model left it blank, and
 keeps one the model named. The pin is never cleared by `finish_work` — the
 turn that called it is still being written when the hook fires — and is
-replaced by the session's next `start_work`.
+replaced by the session's next `start_work`. (Superseded 2026-10-14:
+`finish_work` now closes the pin's window — see "A session pin is a window".)
 
 Claude Code gets the same two halves through its own hooks. `SubagentStop`
 carries the parent's session_id plus the subagent's agent_id and
@@ -121,3 +122,47 @@ answer uses Claude Code's `updatedInput` contract with `permissionDecision:
 "allow"`, which is honest for the two tools it is narrowed to: they only
 open and close a work episode. Codex and Kimi remain declined for
 telemetry; nothing here changes what they record, which is nothing.
+
+## 2026-10-14 — A session pin is a window
+
+A session pin used to claim every turn of its session above the watermark,
+for as long as it existed. That is right for a subagent whose whole life is
+one card, and wrong for a session that works several: an orchestrator
+running QA across many cards opens an episode on one of them mid-session,
+and the next Stop hook would have posted its entire history to that card —
+observed on a real session, 25 turns, 1h35m and about 47M tokens about to
+land on one card for work that was mostly about others — and then kept
+posting every later turn there until the session's next `start_work`.
+
+So the pin now carries a window. The MCP bridge records `started_at` when
+`start_work` passes through with a `session_ref` (the moment the call
+arrived), and `finished_at` when the same session's `finish_work` names the
+card the pin is for — by the card's short id, which the bridge takes from
+the brief it already fetches, in any case, or by its numeric id, so a
+session that starts with "1994" and finishes with "FUL-17" still closes its
+window. A `finish_work` for any other card leaves the pin
+alone; a later `start_work` replaces the pin with a fresh, open window.
+`fulcrum hook stop` posts only turns that overlap the window — `ended_at >=
+started_at` and, once closed, `started_at <= finished_at` — so the turn
+that called `start_work` counts (it ends after the pin is written) and so
+does the turn that called `finish_work` (it started before the window
+closed). This replaces the 2026-10-09 line "The pin is never cleared by
+`finish_work`": the pin is still not deleted, for the reason given there,
+but `finished_at` stops it claiming anything after the finishing turn.
+Windows work per prompt, because a turn is one prompt to settle: start A →
+finish A → start B inside one prompt puts that turn on B and nothing on A,
+so give each card its own prompt.
+
+Turns the window excludes still advance the session's watermark, so they
+are never reconsidered and never land on a later pin. The watermark only
+ever moves to just below the next turn still to post, so excluded turns
+between posted ones are settled with them and a failed post re-sends
+exactly what it failed to send. The cost is deliberate: a turn whose post
+failed and was not retried before the next `start_work` is lost rather than
+put on the wrong card.
+
+A pin with no `started_at` — written by a bridge from before this change —
+and the checkout pin from `fulcrum work` have no window and post every turn
+above the watermark, as before. `--dry-run` prints the window and how many
+turns it would post and pass over. The OMP hook factory is unchanged: it
+already fills `session_ref` into `finish_work` as well as `start_work`.

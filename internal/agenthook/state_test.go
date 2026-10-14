@@ -3,6 +3,7 @@ package agenthook_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,6 +130,101 @@ func TestSessionPinRoundTripsAndPrunes(t *testing.T) {
 	agenthook.PruneSessionPins(dir, time.Now().Add(31*24*time.Hour))
 	if agenthook.ReadSessionPin(dir, "01a1/odd ref") != nil {
 		t.Error("a month-old pin was kept")
+	}
+}
+
+// The window survives the round trip to the nanosecond, and a pin written
+// by a bridge that predates windows reads back with both sides open.
+func TestSessionPinWindowRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	started := time.Date(2026, 10, 14, 9, 25, 10, 123456789, time.UTC)
+	finished := started.Add(4 * time.Minute)
+	pin := agenthook.SessionPin{Feature: "FUL-17", FeatureID: 1994, ProjectID: 24, StartedAt: started, FinishedAt: finished, UpdatedAt: finished}
+	if err := agenthook.WriteSessionPin(dir, "sess", pin); err != nil {
+		t.Fatal(err)
+	}
+	got := agenthook.ReadSessionPin(dir, "sess")
+	if got == nil || !got.StartedAt.Equal(started) || !got.FinishedAt.Equal(finished) {
+		t.Fatalf("window did not survive: %+v", got)
+	}
+
+	// An open window writes no finished_at at all, rather than a zero time.
+	pin.FinishedAt = time.Time{}
+	if err := agenthook.WriteSessionPin(dir, "open", pin); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, agenthook.PinsDir, "open.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "finished_at") || !strings.Contains(string(raw), "started_at") {
+		t.Errorf("open window serialized wrongly: %s", raw)
+	}
+
+	old := `{"feature":"FUL-9","feature_id":7,"project_id":24,"updated_at":"2026-10-09T12:00:00Z"}`
+	if err := os.WriteFile(filepath.Join(dir, agenthook.PinsDir, "old.json"), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	legacy := agenthook.ReadSessionPin(dir, "old")
+	if legacy == nil || legacy.Windowed() {
+		t.Fatalf("an old pin must read as unwindowed: %+v", legacy)
+	}
+	if !legacy.Covers(agenthook.Turn{StartedAt: started.Add(-time.Hour), EndedAt: started.Add(-time.Hour)}) {
+		t.Error("an old pin must cover every turn")
+	}
+}
+
+// Overlap, not containment: the turn that called start_work began before the
+// pin and the turn that called finish_work ends after it closed.
+func TestSessionPinCoversTurnsThatOverlapItsWindow(t *testing.T) {
+	start := time.Date(2026, 10, 14, 9, 0, 0, 0, time.UTC)
+	pin := agenthook.SessionPin{StartedAt: start, FinishedAt: start.Add(10 * time.Minute)}
+	turn := func(from, to time.Duration) agenthook.Turn {
+		return agenthook.Turn{StartedAt: start.Add(from), EndedAt: start.Add(to)}
+	}
+	for name, c := range map[string]struct {
+		turn agenthook.Turn
+		want bool
+	}{
+		"before the pin":        {turn(-5*time.Minute, -time.Minute), false},
+		"calls start_work":      {turn(-time.Minute, time.Minute), true},
+		"ends as the pin opens": {turn(-time.Minute, 0), true},
+		"inside":                {turn(2*time.Minute, 3*time.Minute), true},
+		"calls finish_work":     {turn(9*time.Minute, 11*time.Minute), true},
+		"starts as it closes":   {turn(10*time.Minute, 11*time.Minute), true},
+		"after finish_work":     {turn(11*time.Minute, 12*time.Minute), false},
+	} {
+		if got := pin.Covers(c.turn); got != c.want {
+			t.Errorf("%s: Covers = %v, want %v", name, got, c.want)
+		}
+	}
+}
+
+// finish_work closes the window only when it names the pinned card — by the
+// reference start_work was given, in any case, or by numeric id.
+func TestFinishSessionPinClosesOnlyAMatchingPin(t *testing.T) {
+	dir := t.TempDir()
+	started := time.Date(2026, 10, 14, 9, 0, 0, 0, time.UTC)
+	pin := agenthook.SessionPin{Feature: "FUL-17", FeatureID: 1994, ProjectID: 24, StartedAt: started, UpdatedAt: started}
+	if err := agenthook.WriteSessionPin(dir, "sess", pin); err != nil {
+		t.Fatal(err)
+	}
+
+	closed, err := agenthook.FinishSessionPin(dir, "sess", "FUL-18", started.Add(time.Minute))
+	if err != nil || closed || !agenthook.ReadSessionPin(dir, "sess").FinishedAt.IsZero() {
+		t.Fatalf("a finish_work for another card closed the pin (closed=%v, err=%v)", closed, err)
+	}
+	if closed, _ := agenthook.FinishSessionPin(dir, "nobody", "FUL-17", started); closed {
+		t.Error("closed a pin that does not exist")
+	}
+
+	for _, reference := range []string{"ful-17", "1994"} {
+		finished := started.Add(5 * time.Minute)
+		closed, err := agenthook.FinishSessionPin(dir, "sess", reference, finished)
+		got := agenthook.ReadSessionPin(dir, "sess")
+		if err != nil || !closed || !got.FinishedAt.Equal(finished) || !got.StartedAt.Equal(started) {
+			t.Errorf("%s: did not close the window: closed=%v err=%v pin=%+v", reference, closed, err, got)
+		}
 	}
 }
 

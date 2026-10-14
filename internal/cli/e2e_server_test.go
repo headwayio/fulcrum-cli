@@ -27,6 +27,11 @@ type fixtureServer struct {
 	overrides map[string]string
 	revisions int
 	multiOrg  bool
+	// telemetry is every turn index posted, in arrival order.
+	telemetry []int
+	// failTelemetryPost, when set, refuses that telemetry post (1 is the
+	// next one to arrive) once, recording none of its turns.
+	failTelemetryPost int
 }
 
 const fixtureToken = "corpus-token"
@@ -257,6 +262,33 @@ func newFixtureServer() *fixtureServer {
 			"project_id": payload.ProjectID, "source": "local_scan",
 			"collected_at": "2026-07-01T12:00:00Z",
 		})
+	})
+
+	// Telemetry records which turns arrived, in order, and answers with the
+	// corpus receipt; the hook only needs to know the post landed.
+	mux.HandleFunc("POST /api/agent_context/telemetry", func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Turns []struct {
+				TurnIndex int `json:"turn_index"`
+			} `json:"turns"`
+		}
+		json.NewDecoder(r.Body).Decode(&payload)
+		f.mu.Lock()
+		if f.failTelemetryPost > 0 {
+			f.failTelemetryPost--
+			if f.failTelemetryPost == 0 {
+				f.mu.Unlock()
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte(`{"error":"unavailable","code":"unavailable"}`))
+				return
+			}
+		}
+		for _, turn := range payload.Turns {
+			f.telemetry = append(f.telemetry, turn.TurnIndex)
+		}
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+		w.Write(corpusFile("telemetry", "receipt.json"))
 	})
 
 	authed := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

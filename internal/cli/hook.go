@@ -15,8 +15,9 @@ import (
 )
 
 // maxTurnsPerRequest mirrors the server's own cap. Batching here rather than
-// discovering the limit as a 422 keeps a long session working.
-const maxTurnsPerRequest = 200
+// discovering the limit as a 422 keeps a long session working. A variable
+// only so tests can make a short transcript span several batches.
+var maxTurnsPerRequest = 200
 
 // hookPayload is the JSON a harness writes to the hook's stdin. Only the
 // fields telemetry needs are decoded; the rest is ignored so a harness can
@@ -68,8 +69,12 @@ func (a *App) hookStopCmd() *cobra.Command {
 		Use:   "stop",
 		Short: "Record the turns an agent has just finished",
 		Long: "Reads a harness Stop payload on stdin and records the session's turns\n" +
-			"against the card this checkout is pinned to.\n\n" +
-			"Does nothing at all when the checkout has no pin: a hook fires on its\n" +
+			"against the card the session is pinned to, or else the checkout's.\n\n" +
+			"A session pin is written when start_work names the session, and is a\n" +
+			"window: only turns that overlap it — from the turn that called\n" +
+			"start_work to the turn that called finish_work — are recorded. Turns\n" +
+			"outside it are passed over for good. The checkout pin has no window.\n\n" +
+			"Does nothing at all when there is no pin: a hook fires on its\n" +
 			"own and cannot ask anybody anything, so with no pin there is no honest\n" +
 			"answer to which card the work belongs to, and guessing would put one\n" +
 			"project's cost on another's card.",
@@ -170,11 +175,14 @@ func (a *App) runHookStop(transcriptFlag, cwdFlag, sessionFlag string, dryRun bo
 
 	// Which card: the session's own pin first — written by the MCP bridge
 	// when this session called start_work with its reference, which is what
-	// keeps parallel subagents on their own cards — then the checkout's.
+	// keeps parallel subagents on their own cards — then the checkout's. Only
+	// a session pin carries a window; the checkout pin claims every turn.
 	var work *projectctx.CurrentWork
+	var window *agenthook.SessionPin
 	pinSource := "checkout"
 	if pin := agenthook.ReadSessionPin(stateDir, sessionRef); pin != nil {
 		pinSource = "session"
+		window = pin
 		work = &projectctx.CurrentWork{
 			Feature: pin.Feature, FeatureID: pin.FeatureID, ProjectID: pin.ProjectID, Role: pin.Role,
 		}
@@ -215,12 +223,21 @@ func (a *App) runHookStop(transcriptFlag, cwdFlag, sessionFlag string, dryRun bo
 	state := agenthook.LoadState(stateDir)
 	agenthook.PruneSessionPins(stateDir, time.Now())
 	through := state.PostedThrough(sessionRef)
+	plan := planTurns(turns, through, window)
 
-	pending := make([]api.TelemetryTurn, 0, len(turns))
-	for _, turn := range turns {
-		if turn.Index <= through {
-			continue
-		}
+	if dryRun {
+		a.reportDryRun(work, pinSource, sessionRef, window, turns, plan)
+		return nil
+	}
+	// Turns the window excludes are settled before anything is posted, so
+	// they are never considered again — and never land on a later pin —
+	// even if the post below fails.
+	a.advanceWatermark(state, stateDir, sessionRef, work.Feature, plan.through(0))
+	if len(plan.post) == 0 {
+		return nil
+	}
+	pending := make([]api.TelemetryTurn, 0, len(plan.post))
+	for _, turn := range plan.post {
 		pending = append(pending, api.TelemetryTurn{
 			TurnIndex: turn.Index,
 			// Nano, not RFC3339: the second-precision format truncates both
@@ -236,14 +253,6 @@ func (a *App) runHookStop(transcriptFlag, cwdFlag, sessionFlag string, dryRun bo
 		})
 	}
 
-	if dryRun {
-		a.reportDryRun(work, pinSource, sessionRef, turns, pending)
-		return nil
-	}
-	if len(pending) == 0 {
-		return nil
-	}
-
 	resolved, err := a.resolveConfig()
 	if err != nil {
 		fmt.Fprintf(a.Stderr, "fulcrum: %v\n", err)
@@ -257,7 +266,6 @@ func (a *App) runHookStop(transcriptFlag, cwdFlag, sessionFlag string, dryRun bo
 
 	// Batch to the server's cap. Each batch's watermark is saved as it lands,
 	// so a failure halfway does not re-send what already succeeded.
-	posted := through
 	for start := 0; start < len(pending); start += maxTurnsPerRequest {
 		end := min(start+maxTurnsPerRequest, len(pending))
 		batch := pending[start:end]
@@ -268,34 +276,99 @@ func (a *App) runHookStop(transcriptFlag, cwdFlag, sessionFlag string, dryRun bo
 			fmt.Fprintf(a.Stderr, "fulcrum: could not record agent time: %v\n", wrapAPIError(err))
 			break
 		}
-		posted = batch[len(batch)-1].TurnIndex
-		state.Record(sessionRef, work.Feature, posted, time.Now())
-		if err := state.Save(stateDir, time.Now()); err != nil {
-			// Losing the watermark costs a re-send and nothing else, because
-			// the server dedupes on (session_ref, turn_index).
-			fmt.Fprintf(a.Stderr, "fulcrum: could not save the telemetry watermark: %v\n", err)
-		}
+		a.advanceWatermark(state, stateDir, sessionRef, work.Feature, plan.through(end))
 	}
 	return nil
 }
 
-func (a *App) reportDryRun(work *projectctx.CurrentWork, pinSource, sessionRef string, turns []agenthook.Turn, pending []api.TelemetryTurn) {
+// turnPlan splits the turns above the watermark into those the pin claims and
+// those its window excludes.
+type turnPlan struct {
+	post []agenthook.Turn
+	// skipped counts the turns above the watermark that fall outside the
+	// window. They are never posted, by this pin or any later one.
+	skipped int
+	// considered is the highest turn index above the watermark, posted or
+	// not; once everything to post has landed, the watermark moves here.
+	considered int
+}
+
+func planTurns(turns []agenthook.Turn, through int, window *agenthook.SessionPin) turnPlan {
+	plan := turnPlan{considered: through}
+	for _, turn := range turns {
+		if turn.Index <= through {
+			continue
+		}
+		plan.considered = max(plan.considered, turn.Index)
+		if window != nil && !window.Covers(turn) {
+			plan.skipped++
+			continue
+		}
+		plan.post = append(plan.post, turn)
+	}
+	return plan
+}
+
+// through is how far the watermark may safely move once the first `landed`
+// turns to post have been recorded: up to just below the next turn still to
+// post, so excluded turns between posted ones are settled with them, or to
+// the last turn considered once nothing remains to post. Excluded 1–25,
+// posted 26–30, excluded 31–40 gives 25 before posting and 40 after.
+func (p turnPlan) through(landed int) int {
+	if landed < len(p.post) {
+		return p.post[landed].Index - 1
+	}
+	return p.considered
+}
+
+// advanceWatermark records and saves the watermark when it moves forward.
+func (a *App) advanceWatermark(state *agenthook.State, stateDir, sessionRef, feature string, to int) {
+	if to <= state.PostedThrough(sessionRef) {
+		return
+	}
+	state.Record(sessionRef, feature, to, time.Now())
+	if err := state.Save(stateDir, time.Now()); err != nil {
+		// Losing the watermark costs a re-send and nothing else, because
+		// the server dedupes on (session_ref, turn_index).
+		fmt.Fprintf(a.Stderr, "fulcrum: could not save the telemetry watermark: %v\n", err)
+	}
+}
+
+func (a *App) reportDryRun(work *projectctx.CurrentWork, pinSource, sessionRef string, window *agenthook.SessionPin, turns []agenthook.Turn, plan turnPlan) {
 	fmt.Fprintf(a.Stdout, "card:     %s (feature %d, project %d) via the %s pin\n", work.Feature, work.FeatureID, work.ProjectID, pinSource)
 	fmt.Fprintf(a.Stdout, "session:  %s\n", sessionRef)
-	fmt.Fprintf(a.Stdout, "turns:    %d in the transcript, %d not yet recorded\n", len(turns), len(pending))
+	fmt.Fprintf(a.Stdout, "window:   %s\n", describeWindow(window))
+	fmt.Fprintf(a.Stdout, "turns:    %d in the transcript, %d not yet recorded: %d to post, %d outside the window\n",
+		len(turns), len(plan.post)+plan.skipped, len(plan.post), plan.skipped)
 
 	var active time.Duration
 	var input, output, cacheCreation, cacheRead int64
-	for _, turn := range turns {
+	for _, turn := range plan.post {
 		active += turn.Duration()
 		input += turn.Usage.InputTokens
 		output += turn.Usage.OutputTokens
 		cacheCreation += turn.Usage.CacheCreationTokens
 		cacheRead += turn.Usage.CacheReadTokens
 	}
-	fmt.Fprintf(a.Stdout, "active:   %s\n", active.Round(time.Second))
+	fmt.Fprintf(a.Stdout, "active:   %s in the turns to post\n", active.Round(time.Second))
 	fmt.Fprintf(a.Stdout, "tokens:   in %d, out %d, cache write %d, cache read %d\n",
 		input, output, cacheCreation, cacheRead)
+}
+
+// describeWindow names the span a pin claims, for the operator reading a dry
+// run.
+func describeWindow(window *agenthook.SessionPin) string {
+	if window == nil || !window.Windowed() {
+		return "none (every turn not yet recorded posts)"
+	}
+	from, to := "the start of the session", "open (no finish_work yet)"
+	if !window.StartedAt.IsZero() {
+		from = window.StartedAt.UTC().Format(time.RFC3339)
+	}
+	if !window.FinishedAt.IsZero() {
+		to = window.FinishedAt.UTC().Format(time.RFC3339)
+	}
+	return from + " → " + to
 }
 
 // readHookPayload decodes the harness's JSON from stdin. An empty or

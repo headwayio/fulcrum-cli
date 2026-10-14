@@ -54,7 +54,7 @@ type Server struct {
 	// pinDir is the user's config dir, where a session pin is written when
 	// start_work passes through with a session_ref. Empty disables that.
 	pinDir string
-	// pinMu serialises the pin writes. The SDK handles tool calls
+	// pinMu serializes the pin writes. The SDK handles tool calls
 	// concurrently, and finish_work's read-modify-write of a pin must not
 	// interleave with a start_work writing the same session's pin.
 	pinMu sync.Mutex

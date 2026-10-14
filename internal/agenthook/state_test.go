@@ -158,7 +158,7 @@ func TestSessionPinWindowRoundTrips(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(raw), "finished_at") || !strings.Contains(string(raw), "started_at") {
-		t.Errorf("open window serialised wrongly: %s", raw)
+		t.Errorf("open window serialized wrongly: %s", raw)
 	}
 
 	old := `{"feature":"FUL-9","feature_id":7,"project_id":24,"updated_at":"2026-10-09T12:00:00Z"}`

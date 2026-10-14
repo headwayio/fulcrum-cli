@@ -137,8 +137,10 @@ posting every later turn there until the session's next `start_work`.
 So the pin now carries a window. The MCP bridge records `started_at` when
 `start_work` passes through with a `session_ref` (the moment the call
 arrived), and `finished_at` when the same session's `finish_work` names the
-card the pin is for (by the reference `start_work` was given, in any case,
-or the numeric id). A `finish_work` for any other card leaves the pin
+card the pin is for — by the card's short id, which the bridge takes from
+the brief it already fetches, in any case, or by its numeric id, so a
+session that starts with "1994" and finishes with "FUL-17" still closes its
+window. A `finish_work` for any other card leaves the pin
 alone; a later `start_work` replaces the pin with a fresh, open window.
 `fulcrum hook stop` posts only turns that overlap the window — `ended_at >=
 started_at` and, once closed, `started_at <= finished_at` — so the turn
@@ -147,6 +149,9 @@ does the turn that called `finish_work` (it started before the window
 closed). This replaces the 2026-10-09 line "The pin is never cleared by
 `finish_work`": the pin is still not deleted, for the reason given there,
 but `finished_at` stops it claiming anything after the finishing turn.
+Windows work per prompt, because a turn is one prompt to settle: start A →
+finish A → start B inside one prompt puts that turn on B and nothing on A,
+so give each card its own prompt.
 
 Turns the window excludes still advance the session's watermark, so they
 are never reconsidered and never land on a later pin. The watermark only

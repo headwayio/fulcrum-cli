@@ -29,6 +29,9 @@ type fixtureServer struct {
 	multiOrg  bool
 	// telemetry is every turn index posted, in arrival order.
 	telemetry []int
+	// failTelemetryPost, when set, refuses that telemetry post (1 is the
+	// next one to arrive) once, recording none of its turns.
+	failTelemetryPost int
 }
 
 const fixtureToken = "corpus-token"
@@ -271,6 +274,15 @@ func newFixtureServer() *fixtureServer {
 		}
 		json.NewDecoder(r.Body).Decode(&payload)
 		f.mu.Lock()
+		if f.failTelemetryPost > 0 {
+			f.failTelemetryPost--
+			if f.failTelemetryPost == 0 {
+				f.mu.Unlock()
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte(`{"error":"unavailable","code":"unavailable"}`))
+				return
+			}
+		}
 		for _, turn := range payload.Turns {
 			f.telemetry = append(f.telemetry, turn.TurnIndex)
 		}

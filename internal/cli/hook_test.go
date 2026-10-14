@@ -225,6 +225,42 @@ func TestHookStopKeepsTheWatermarkHonestWhenExcludedAndPostedTurnsInterleave(t *
 	}
 }
 
+// The window claims turns 3–14 of 20, posted five at a time: 3–7, 8–12,
+// 13–14. When the second post fails, the first batch stays recorded, the
+// watermark stops just below turn 8 — the first turn not posted — and the
+// rerun posts exactly 8–14 before settling everything.
+func TestHookStopResumesAfterAFailedSecondBatch(t *testing.T) {
+	saved := maxTurnsPerRequest
+	maxTurnsPerRequest = 5
+	t.Cleanup(func() { maxTurnsPerRequest = saved })
+
+	h := newHookStop(t)
+	h.pin(t, agenthook.SessionPin{StartedAt: at(3, 10*time.Second), FinishedAt: at(14, 20*time.Second)})
+	writeTranscript(t, h.transcript, 20)
+
+	h.srv.mu.Lock()
+	h.srv.failTelemetryPost = 2
+	h.srv.mu.Unlock()
+	_, stderr := h.run(t)
+	if !strings.Contains(stderr, "could not record agent time") {
+		t.Fatalf("the failed post was not reported: %q", stderr)
+	}
+	if got := h.posted(); !reflect.DeepEqual(got, span(3, 7)) {
+		t.Fatalf("posted %v before the failure, want 3–7 and nothing after it", got)
+	}
+	if got := h.watermark(); got != 7 {
+		t.Fatalf("watermark %d after the second batch failed, want 7", got)
+	}
+
+	h.run(t)
+	if got := h.posted(); !reflect.DeepEqual(got, span(8, 14)) {
+		t.Fatalf("rerun posted %v, want exactly 8–14", got)
+	}
+	if got := h.watermark(); got != 20 {
+		t.Fatalf("watermark %d after the rerun, want 20", got)
+	}
+}
+
 // A pin written by a bridge that predates windows has no started_at, and
 // claims every turn not yet recorded, as it always did.
 func TestHookStopPostsEverythingForAPinWithoutAWindow(t *testing.T) {

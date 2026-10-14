@@ -29,6 +29,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -53,6 +54,10 @@ type Server struct {
 	// pinDir is the user's config dir, where a session pin is written when
 	// start_work passes through with a session_ref. Empty disables that.
 	pinDir string
+	// pinMu serialises the pin writes. The SDK handles tool calls
+	// concurrently, and finish_work's read-modify-write of a pin must not
+	// interleave with a start_work writing the same session's pin.
+	pinMu sync.Mutex
 }
 
 // New fetches the catalogue and builds a server exposing it, plus the local
@@ -141,9 +146,12 @@ var episodeRole = regexp.MustCompile(`\bas ([^.\n]+)\.`)
 //
 // The card's numeric ids come from its brief, exactly as `fulcrum work`
 // takes them, because the hook that reads the pin fires on its own and has no
-// way to turn a short id into a row. Every failure is a stderr diagnostic and
-// nothing else: start_work already succeeded, and a pin is a courtesy to the
-// telemetry, not a condition of the call.
+// way to turn a short id into a row. So does the short id the pin names the
+// card by: start_work accepts "1994" and "FUL-17" alike, and so does
+// finish_work, so the pin keeps the canonical short id beside the numeric one
+// and a finish in either form closes it. Every failure is a stderr diagnostic
+// and nothing else: start_work already succeeded, and a pin is a courtesy to
+// the telemetry, not a condition of the call.
 func (s *Server) pinSession(ctx context.Context, arguments map[string]any, reply string, startedAt time.Time) {
 	sessionRef := stringArgument(arguments, "session_ref")
 	feature := stringArgument(arguments, "feature")
@@ -158,12 +166,15 @@ func (s *Server) pinSession(ctx context.Context, arguments map[string]any, reply
 		return
 	}
 	pin := agenthook.SessionPin{
-		Feature:   feature,
+		Feature:   projectctx.BriefField(brief.Text(), "feature"),
 		FeatureID: projectctx.BriefID(brief.Text(), "feature_id"),
 		ProjectID: projectctx.BriefID(brief.Text(), "project_id"),
 		Role:      stringArgument(arguments, "role"),
 		StartedAt: startedAt,
 		UpdatedAt: time.Now().UTC(),
+	}
+	if pin.Feature == "" {
+		pin.Feature = feature
 	}
 	if pin.Role == "" {
 		if match := episodeRole.FindStringSubmatch(reply); match != nil {
@@ -174,6 +185,8 @@ func (s *Server) pinSession(ctx context.Context, arguments map[string]any, reply
 		fmt.Fprintf(os.Stderr, "fulcrum: start_work succeeded but %s's brief carries no ids, so the session was not pinned\n", feature)
 		return
 	}
+	s.pinMu.Lock()
+	defer s.pinMu.Unlock()
 	if err := agenthook.WriteSessionPin(s.pinDir, sessionRef, pin); err != nil {
 		fmt.Fprintf(os.Stderr, "fulcrum: could not pin session %s to %s: %v\n", sessionRef, feature, err)
 	}
@@ -189,6 +202,8 @@ func (s *Server) finishSession(arguments map[string]any) {
 	if s.pinDir == "" || sessionRef == "" || feature == "" {
 		return
 	}
+	s.pinMu.Lock()
+	defer s.pinMu.Unlock()
 	if _, err := agenthook.FinishSessionPin(s.pinDir, sessionRef, feature, time.Now()); err != nil {
 		fmt.Fprintf(os.Stderr, "fulcrum: finish_work succeeded but session %s's pin could not be closed: %v\n", sessionRef, err)
 	}

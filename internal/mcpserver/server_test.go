@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -330,6 +331,9 @@ func workCatalogue() []api.ToolDefinition {
 		api.ToolDefinition{Name: "start_work", Description: "opens an episode", InputSchema: map[string]any{
 			"type": "object", "properties": map[string]any{"feature": map[string]any{"type": "string"}}, "required": []any{"feature"},
 		}},
+		api.ToolDefinition{Name: "finish_work", Description: "closes an episode", InputSchema: map[string]any{
+			"type": "object", "properties": map[string]any{"feature": map[string]any{"type": "string"}}, "required": []any{"feature"},
+		}},
 		api.ToolDefinition{Name: "get_feature", Description: "brief", InputSchema: map[string]any{
 			"type": "object", "properties": map[string]any{"feature": map[string]any{"type": "string"}}, "required": []any{"feature"},
 		}},
@@ -392,5 +396,60 @@ func TestAFailedStartWorkPinsNothing(t *testing.T) {
 
 	if agenthook.ReadSessionPin(pinDir, "sess-b") != nil {
 		t.Error("a session was pinned to work that never started")
+	}
+}
+
+// start_work opens the pin's window at the moment it was called, and the
+// session's finish_work for the same card closes it; a finish_work for any
+// other card leaves it open.
+func TestStartAndFinishWorkBoundTheSessionPinsWindow(t *testing.T) {
+	deps := &fakeDeps{tools: workCatalogue(), replies: map[string]string{
+		"start_work":  "Started episode 3 on feature 1994 as Development.",
+		"finish_work": "Finished episode 3.",
+		"get_feature": briefForPin,
+	}}
+	pinDir := t.TempDir()
+	session := connectWithPins(t, deps, linkedCheckout(t), pinDir)
+
+	before := time.Now()
+	callText(t, session, "start_work", map[string]any{"feature": "FUL-17", "session_ref": "sess-qa"})
+	after := time.Now()
+	pin := agenthook.ReadSessionPin(pinDir, "sess-qa")
+	if pin == nil || pin.StartedAt.Before(before) || pin.StartedAt.After(after) || !pin.FinishedAt.IsZero() {
+		t.Fatalf("start_work did not open a window between %v and %v: %+v", before, after, pin)
+	}
+	started := pin.StartedAt
+
+	callText(t, session, "finish_work", map[string]any{"feature": "FUL-18", "session_ref": "sess-qa"})
+	if pin := agenthook.ReadSessionPin(pinDir, "sess-qa"); !pin.FinishedAt.IsZero() {
+		t.Fatalf("finish_work for another card closed the window: %+v", pin)
+	}
+
+	callText(t, session, "finish_work", map[string]any{"feature": "FUL-17", "session_ref": "sess-qa"})
+	pin = agenthook.ReadSessionPin(pinDir, "sess-qa")
+	if pin.FinishedAt.IsZero() || pin.FinishedAt.Before(started) || !pin.StartedAt.Equal(started) {
+		t.Fatalf("finish_work did not close the window: %+v", pin)
+	}
+
+	// The next start_work replaces the pin with a fresh, open window.
+	callText(t, session, "start_work", map[string]any{"feature": "FUL-17", "session_ref": "sess-qa"})
+	pin = agenthook.ReadSessionPin(pinDir, "sess-qa")
+	if !pin.FinishedAt.IsZero() || !pin.StartedAt.After(started) {
+		t.Errorf("start_work did not open a fresh window: %+v", pin)
+	}
+}
+
+func TestAFailedFinishWorkLeavesTheWindowOpen(t *testing.T) {
+	deps := &fakeDeps{tools: workCatalogue(), err: &api.Error{Code: "insufficient_scope", ServerMessage: "no"}}
+	pinDir := t.TempDir()
+	started := time.Now().UTC()
+	if err := agenthook.WriteSessionPin(pinDir, "sess-qa", agenthook.SessionPin{Feature: "FUL-17", FeatureID: 1994, ProjectID: 24, StartedAt: started}); err != nil {
+		t.Fatal(err)
+	}
+	session := connectWithPins(t, deps, linkedCheckout(t), pinDir)
+
+	callText(t, session, "finish_work", map[string]any{"feature": "FUL-17", "session_ref": "sess-qa"})
+	if pin := agenthook.ReadSessionPin(pinDir, "sess-qa"); !pin.FinishedAt.IsZero() {
+		t.Errorf("a failed finish_work closed the window: %+v", pin)
 	}
 }

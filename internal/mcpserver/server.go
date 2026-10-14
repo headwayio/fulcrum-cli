@@ -105,12 +105,20 @@ func (s *Server) addRemote(server *mcp.Server, definition api.ToolDefinition) {
 			arguments["project"] = strconv.FormatInt(s.local.ProjectID, 10)
 		}
 
+		// Taken before the call is forwarded: the window opens when the
+		// session asked for the episode, which is within the turn that asked.
+		calledAt := time.Now().UTC()
 		result, err := s.deps.McpCall(ctx, definition.Name, arguments)
 		if err != nil {
 			return failure("%s", describeCallError(definition.Name, err)), nil
 		}
-		if definition.Name == "start_work" && !result.IsError {
-			s.pinSession(ctx, arguments, result.Text())
+		if !result.IsError {
+			switch definition.Name {
+			case "start_work":
+				s.pinSession(ctx, arguments, result.Text(), calledAt)
+			case "finish_work":
+				s.finishSession(arguments)
+			}
 		}
 		return &mcp.CallToolResult{
 			IsError: result.IsError,
@@ -127,14 +135,16 @@ var episodeRole = regexp.MustCompile(`\bas ([^.\n]+)\.`)
 // pinSession records which card a harness session is working, keyed by the
 // session_ref the session passed to start_work — the same reference the
 // telemetry hook sees as the transcript's session id. Without a session_ref
-// there is nothing to key on and the checkout pin stays the answer.
+// there is nothing to key on and the checkout pin stays the answer. The pin
+// opens a fresh window at startedAt, replacing whatever the session pinned
+// before.
 //
 // The card's numeric ids come from its brief, exactly as `fulcrum work`
 // takes them, because the hook that reads the pin fires on its own and has no
 // way to turn a short id into a row. Every failure is a stderr diagnostic and
 // nothing else: start_work already succeeded, and a pin is a courtesy to the
 // telemetry, not a condition of the call.
-func (s *Server) pinSession(ctx context.Context, arguments map[string]any, reply string) {
+func (s *Server) pinSession(ctx context.Context, arguments map[string]any, reply string, startedAt time.Time) {
 	sessionRef := stringArgument(arguments, "session_ref")
 	feature := stringArgument(arguments, "feature")
 	if s.pinDir == "" || sessionRef == "" || feature == "" {
@@ -152,6 +162,7 @@ func (s *Server) pinSession(ctx context.Context, arguments map[string]any, reply
 		FeatureID: projectctx.BriefID(brief.Text(), "feature_id"),
 		ProjectID: projectctx.BriefID(brief.Text(), "project_id"),
 		Role:      stringArgument(arguments, "role"),
+		StartedAt: startedAt,
 		UpdatedAt: time.Now().UTC(),
 	}
 	if pin.Role == "" {
@@ -165,6 +176,21 @@ func (s *Server) pinSession(ctx context.Context, arguments map[string]any, reply
 	}
 	if err := agenthook.WriteSessionPin(s.pinDir, sessionRef, pin); err != nil {
 		fmt.Fprintf(os.Stderr, "fulcrum: could not pin session %s to %s: %v\n", sessionRef, feature, err)
+	}
+}
+
+// finishSession closes the window of the session's pin when finish_work names
+// the card the pin is for, so the session's later turns stop landing on it.
+// The finishing turn itself still posts: it started before the window closed.
+// Like pinSession, a failure is a diagnostic and nothing more.
+func (s *Server) finishSession(arguments map[string]any) {
+	sessionRef := stringArgument(arguments, "session_ref")
+	feature := stringArgument(arguments, "feature")
+	if s.pinDir == "" || sessionRef == "" || feature == "" {
+		return
+	}
+	if _, err := agenthook.FinishSessionPin(s.pinDir, sessionRef, feature, time.Now()); err != nil {
+		fmt.Fprintf(os.Stderr, "fulcrum: finish_work succeeded but session %s's pin could not be closed: %v\n", sessionRef, err)
 	}
 }
 

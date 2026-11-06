@@ -58,6 +58,9 @@ type transcriptRecord struct {
 	ID        string         `json:"id"`
 	Timestamp string         `json:"timestamp"`
 	Message   *transcriptMsg `json:"message"`
+	// CustomType names what an OMP "custom" or "custom_message" record is
+	// ("session_exit", "irc:incoming", "async-result", …).
+	CustomType string `json:"customType"`
 }
 
 type transcriptMsg struct {
@@ -66,6 +69,12 @@ type transcriptMsg struct {
 	Model   string          `json:"model"`
 	Usage   *transcriptUse  `json:"usage"`
 	Content json.RawMessage `json:"content"`
+	// Why the response ended, in each harness's spelling: OMP's "toolUse"
+	// and Claude Code's "tool_use" mean the agent is waiting on its own tools;
+	// anything else means it handed back. Claude Code leaves it null on the
+	// records it writes mid-response.
+	OMPStopReason    string `json:"stopReason"`
+	ClaudeStopReason string `json:"stop_reason"`
 }
 
 // transcriptUse carries both harnesses' spellings of the same four numbers.
@@ -90,12 +99,18 @@ const (
 	kindOther     recordKind = iota // session metadata, tool output, custom entries
 	kindAssistant                   // the model said something; carries usage
 	kindInput                       // someone handed the agent new work
+	kindInjected                    // a message the harness put into the conversation
+	kindExit                        // the harness ended the agent's loop
 )
 
-// classify maps a record from either harness onto the two things the parser
-// cares about. Claude Code reports tool output as a "user" record whose
-// content holds tool_result blocks; OMP gives it its own role, so no content
+// classify maps a record from either harness onto what the parser cares
+// about. Claude Code reports tool output as a "user" record whose content
+// holds tool_result blocks; OMP gives it its own role, so no content
 // inspection is needed there.
+//
+// OMP's custom_message records (an IRC message, a background job's result, a
+// reminder) are kindInjected rather than kindInput, because what they mean
+// depends on when they arrive: see ParseTranscript.
 func classify(record transcriptRecord) recordKind {
 	switch record.Type {
 	case "assistant":
@@ -115,8 +130,28 @@ func classify(record transcriptRecord) recordKind {
 		case "user":
 			return kindInput
 		}
+	case "custom_message":
+		return kindInjected
+	case "custom":
+		if record.CustomType == "session_exit" {
+			return kindExit
+		}
 	}
 	return kindOther
+}
+
+// handsBack reports whether an assistant record ended the agent's run: it
+// stopped for a reason other than waiting on tools it called. A record that
+// gives no reason is not taken as a hand-back.
+func handsBack(message *transcriptMsg) bool {
+	if message == nil {
+		return false
+	}
+	reason := message.OMPStopReason
+	if reason == "" {
+		reason = message.ClaudeStopReason
+	}
+	return reason != "" && reason != "toolUse" && reason != "tool_use"
 }
 
 // responseKey identifies one model response so its usage is counted once:
@@ -157,6 +192,20 @@ func responseKey(record transcriptRecord) string {
 //     said before stopping, and only new input — never tool output — starts
 //     a new one.
 //
+// NEW INPUT IS NOT ONLY A USER RECORD. OMP wakes an idle agent with a
+// custom_message — an IRC message, a background job's result — and the round
+// that follows is new work exactly as a prompt's would be. Folding it into
+// the previous turn loses it for good: that turn's index was posted when the
+// agent handed back, and the server ignores a turn index it already holds. So
+// an injected message starts a new turn when it arrives after the agent
+// handed back (its last response asked for no tool, or the harness recorded
+// the loop's exit). The same message arriving mid-run, while the agent's
+// tools are still pending, is steering and stays in the current turn.
+//
+// Timestamps are taken as a running maximum: OMP stamps an injected message
+// when it was sent, which can be long before it was delivered, and a turn
+// must not start before the one it follows ended.
+//
 // Malformed lines are skipped rather than failing the parse: a transcript is
 // something the harness owns and may extend, and a hook that dies on an
 // unfamiliar record would take the whole session's telemetry with it.
@@ -171,6 +220,9 @@ func ParseTranscript(r io.Reader) ([]Turn, error) {
 		counted  = map[string]bool{}
 		previous time.Time
 		havePrev bool
+		// idle is true once the agent has handed back and nothing has woken
+		// it since.
+		idle bool
 	)
 
 	closeTurn := func() {
@@ -211,15 +263,34 @@ func ParseTranscript(r io.Reader) ([]Turn, error) {
 						current.Calls++
 						addUsage(&current.Usage, record.Message)
 					}
+					idle = handsBack(record.Message)
 
 				case kindInput:
 					// New input, so whatever the agent was doing is over. Tool
 					// output is NOT new input — it is the agent's own work
 					// coming back to it — and classify never reports it here.
 					closeTurn()
+					idle = false
+
+				case kindInjected:
+					// New input only when it woke an idle agent; mid-run it is
+					// part of the work in progress.
+					if idle {
+						closeTurn()
+						idle = false
+					}
+
+				case kindExit:
+					// The loop is over, whatever it was waiting on. OMP
+					// resolves a tool call left pending as an aborted response
+					// only when the agent is woken again; closing here keeps
+					// that record from stretching this turn across the idle
+					// time in between.
+					closeTurn()
+					idle = true
 				}
 
-				if haveStamp {
+				if haveStamp && (!havePrev || stamp.After(previous)) {
 					previous, havePrev = stamp, true
 				}
 			}

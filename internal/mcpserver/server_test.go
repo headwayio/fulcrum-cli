@@ -374,6 +374,9 @@ func TestStartWorkWithASessionRefPinsTheSession(t *testing.T) {
 	if pin.Role != "Development" {
 		t.Errorf("role should come from the server's reply when the call left it out: %q", pin.Role)
 	}
+	if pin.Episode != 3 {
+		t.Errorf("episode should come from the server's reply: %d", pin.Episode)
+	}
 }
 
 func TestStartWorkWithoutASessionRefLeavesTheCheckoutPinInCharge(t *testing.T) {
@@ -435,6 +438,9 @@ func TestStartAndFinishWorkBoundTheSessionPinsWindow(t *testing.T) {
 	pin = agenthook.ReadSessionPin(pinDir, "sess-qa")
 	if pin.FinishedAt.IsZero() || pin.FinishedAt.Before(started) || !pin.StartedAt.Equal(started) {
 		t.Fatalf("finish_work did not close the window: %+v", pin)
+	}
+	if pin.Episode != 3 {
+		t.Errorf("finish_work lost the episode the turns still post to: %+v", pin)
 	}
 
 	// The next start_work replaces the pin with a fresh, open window.

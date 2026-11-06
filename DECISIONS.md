@@ -202,3 +202,26 @@ session that is running across the upgrade, has a woken round followed by
 a typed prompt, and posts through a pin without a window can post that
 prompt's turn a second time under its new index. Windowed pins post only
 turns inside the window, which limits this to turns inside the open window.
+
+## 2026-11-06 — A session's turns name the episode its start_work opened
+
+The hook never said which episode a turn belonged to, so the server put it
+on the card's open episode, else its latest. A subagent's turns post when
+it hands back, after its own `finish_work`, and by then a QA pass or a fix
+round may have opened another episode on the same card: the turns landed
+on that one. The same happens to a turn whose post failed and was retried
+later.
+
+The MCP bridge already reads `start_work`'s reply ("Started episode 3 on
+FUL-17 as Development. …") for the role; it now also stores the episode
+number in the session pin, and `fulcrum hook stop` sends it as `episode`
+on every turn it posts from that pin. The telemetry endpoint takes
+`episode` per turn and records it as given, open or closed. `finish_work`
+keeps it in the pin with the window, so the finishing turn and anything
+else the window claims still go to that episode; the session's next
+`start_work` replaces the pin, episode and all.
+
+A pin from an older bridge, a reply without a number and the checkout pin
+from `fulcrum work` name no episode; their turns omit the field and the
+server chooses as before. `--dry-run` prints the episode beside the window,
+and lists each turn it would post.

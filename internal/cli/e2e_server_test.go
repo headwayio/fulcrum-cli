@@ -27,8 +27,10 @@ type fixtureServer struct {
 	overrides map[string]string
 	revisions int
 	multiOrg  bool
-	// telemetry is every turn index posted, in arrival order.
-	telemetry []int
+	// telemetry is every turn index posted, in arrival order, and
+	// telemetryEpisodes the episode each one named (0 when it named none).
+	telemetry         []int
+	telemetryEpisodes []int
 	// failTelemetryPost, when set, refuses that telemetry post (1 is the
 	// next one to arrive) once, recording none of its turns.
 	failTelemetryPost int
@@ -270,6 +272,7 @@ func newFixtureServer() *fixtureServer {
 		var payload struct {
 			Turns []struct {
 				TurnIndex int `json:"turn_index"`
+				Episode   int `json:"episode"`
 			} `json:"turns"`
 		}
 		json.NewDecoder(r.Body).Decode(&payload)
@@ -285,6 +288,7 @@ func newFixtureServer() *fixtureServer {
 		}
 		for _, turn := range payload.Turns {
 			f.telemetry = append(f.telemetry, turn.TurnIndex)
+			f.telemetryEpisodes = append(f.telemetryEpisodes, turn.Episode)
 		}
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusCreated)

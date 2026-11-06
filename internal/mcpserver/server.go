@@ -137,6 +137,11 @@ func (s *Server) addRemote(server *mcp.Server, definition api.ToolDefinition) {
 // let the role default still posts its turns under the right one.
 var episodeRole = regexp.MustCompile(`\bas ([^.\n]+)\.`)
 
+// episodeNumber lifts the number of the episode start_work opened out of the
+// same reply, so the session's turns name that episode even when they post
+// after its finish_work, and after another episode has opened on the card.
+var episodeNumber = regexp.MustCompile(`\bStarted episode (\d+)\b`)
+
 // pinSession records which card a harness session is working, keyed by the
 // session_ref the session passed to start_work — the same reference the
 // telemetry hook sees as the transcript's session id. Without a session_ref
@@ -180,6 +185,9 @@ func (s *Server) pinSession(ctx context.Context, arguments map[string]any, reply
 		if match := episodeRole.FindStringSubmatch(reply); match != nil {
 			pin.Role = strings.TrimSpace(match[1])
 		}
+	}
+	if match := episodeNumber.FindStringSubmatch(reply); match != nil {
+		pin.Episode, _ = strconv.Atoi(match[1])
 	}
 	if pin.FeatureID == 0 || pin.ProjectID == 0 {
 		fmt.Fprintf(os.Stderr, "fulcrum: start_work succeeded but %s's brief carries no ids, so the session was not pinned\n", feature)

@@ -38,17 +38,26 @@ import (
 const PinsDir = "session-pins"
 
 // SessionPin is what the hook needs to post a session's turns: the numeric
-// ids, because it fires on its own and cannot turn "FUL-17" into a row, and
-// the window those turns must fall in.
+// ids, because it fires on its own and cannot turn "FUL-17" into a row, the
+// window those turns must fall in, and the episode they belong to.
 //
 // A zero StartedAt or FinishedAt leaves that side of the window open. A pin
 // written by a bridge that predates windows has neither, and claims every
 // turn the session has not yet posted, exactly as it always did.
+//
+// Episode is the number start_work's reply gave the episode it opened. A
+// subagent's turns post when it hands back, after its own finish_work, and by
+// then a later start_work on the card (a QA pass, a fix round) may have
+// opened another episode; naming the episode keeps the turns on the one the
+// session worked in. Zero, from a bridge that predates it or a reply without
+// a number, leaves the choice to the server: the open episode, else the
+// latest.
 type SessionPin struct {
 	Feature    string    `json:"feature"`
 	FeatureID  int64     `json:"feature_id"`
 	ProjectID  int64     `json:"project_id"`
 	Role       string    `json:"role,omitempty"`
+	Episode    int       `json:"episode,omitempty"`
 	StartedAt  time.Time `json:"started_at,omitzero"`
 	FinishedAt time.Time `json:"finished_at,omitzero"`
 	UpdatedAt  time.Time `json:"updated_at"`

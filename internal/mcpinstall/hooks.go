@@ -108,7 +108,9 @@ var unsupported = map[string]string{
 //   - agent_end fires in EVERY session when an agent loop ends. It is used
 //     only for subagents, whose transcripts live inside the parent's session
 //     directory under the agent's name rather than the <stamp>_<id>.jsonl
-//     shape of a main session; a subagent's assignment is one turn.
+//     shape of a main session. A subagent's assignment is one turn, and
+//     every round a message wakes it for afterwards is another, each ending
+//     in its own agent_end.
 //
 // The hook never throws: an unhandled error in a handler takes the session
 // down, and telemetry is not worth that.

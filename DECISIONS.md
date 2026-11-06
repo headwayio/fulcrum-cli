@@ -60,3 +60,29 @@ Diffs render as unified *text* diffs (go-udiff, lipgloss-colored) for JSON
 and markdown alike. The structural JSON-path diff and the three-way
 conflicted panel are v1.1: risk H1 in the plan pre-commits this descope so
 the diff screen cannot hold the v0.1.0 tag.
+
+## 2026-10-09 — OMP telemetry reads the transcript directly; the hook lives at user scope
+
+`fulcrum hook stop` now parses OMP session files as well as Claude Code's,
+detected per record rather than by a flag: OMP writes `type: "message"` with
+the speaker in `message.role` (`user` / `assistant` / `toolResult`) and usage
+as `{input, output, cacheRead, cacheWrite}`, one record per model response
+keyed by the record id. The turn arithmetic — count a response once, never
+let tool output end a turn — is unchanged, so both harnesses produce the
+same numbers for the same work. We did not add an OMP-specific payload: the
+OMP hook factory builds the Claude-shaped Stop payload itself from
+`ctx.sessionManager.getSessionFile()` / `getSessionId()`, so the command has
+one input contract.
+
+The factory is written to `~/.omp/agent/hooks/post/fulcrum-telemetry.ts`,
+not the project's `.omp/hooks/`. Same reasoning as the Claude hook staying
+out of the committed settings file: it names this machine's binary by
+absolute path, and a hook is a side effect a teammate did not ask for. OMP
+loads user hooks in every project, which is harmless — with no pin the
+command records nothing. The MCP server entry for OMP is the existing
+`.mcp.json`, which OMP reads as its portable fallback; writing
+`.omp/mcp.json` too would register the server twice.
+
+The factory records on `session_stop`, which OMP awaits before the turn
+settles — the same moment Claude Code's Stop fires, with the transcript
+complete.

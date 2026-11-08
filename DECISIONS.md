@@ -166,3 +166,62 @@ and the checkout pin from `fulcrum work` have no window and post every turn
 above the watermark, as before. `--dry-run` prints the window and how many
 turns it would post and pass over. The OMP hook factory is unchanged: it
 already fills `session_ref` into `finish_work` as well as `start_work`.
+
+## 2026-11-06 — A message that wakes an idle agent starts a turn
+
+The transcript parser started a turn only on a user record. OMP wakes an
+idle agent with a `custom_message` instead (an IRC message, a background
+job's result), so a subagent woken again after handing back had its
+whole new round folded into the turn before it. That turn's index was
+already posted when the agent first handed back, and the server ignores a
+turn index it already holds, so every such round recorded nothing. On real
+sessions this was every follow-up round: a fix round started by IRC, the
+second episode on the same card, the answer to a QA report.
+
+A `custom_message` now starts a new turn when it arrives after the agent
+handed back: its last response ended for a reason other than `toolUse`
+(OMP's `stopReason`; Claude Code's `stop_reason` reads the same way), or
+OMP recorded `session_exit` since. One that arrives mid-run, while tools
+are pending, is steering and stays in the current turn. A user record
+starts a turn wherever it falls, as before. `session_exit` also closes the
+turn: OMP resolves a tool call left pending at exit as an aborted, empty
+response only when the agent is woken again, and that record must not
+stretch the old turn across the idle time.
+
+OMP stamps an injected message when it was sent, which can be before an
+earlier round ended (an IRC message sent while the agent slept, delivered
+after the round a job result started). Turn starts therefore use the
+latest timestamp seen so far, so a turn never starts inside the one before
+it.
+
+Turn indices stay stable: the transcript is append-only and each record's
+meaning depends only on what came before it. They do change once, for a
+transcript parsed before and after this change, because rounds folded into
+an earlier turn become turns of their own and push later indices up. A
+session that is running across the upgrade, has a woken round followed by
+a typed prompt, and posts through a pin without a window can post that
+prompt's turn a second time under its new index. Windowed pins post only
+turns inside the window, which limits this to turns inside the open window.
+
+## 2026-11-06 — A session's turns name the episode its start_work opened
+
+The hook never said which episode a turn belonged to, so the server put it
+on the card's open episode, else its latest. A subagent's turns post when
+it hands back, after its own `finish_work`, and by then a QA pass or a fix
+round may have opened another episode on the same card: the turns landed
+on that one. The same happens to a turn whose post failed and was retried
+later.
+
+The MCP bridge already reads `start_work`'s reply ("Started episode 3 on
+FUL-17 as Development. …") for the role; it now also stores the episode
+number in the session pin, and `fulcrum hook stop` sends it as `episode`
+on every turn it posts from that pin. The telemetry endpoint takes
+`episode` per turn and records it as given, open or closed. `finish_work`
+keeps it in the pin with the window, so the finishing turn and anything
+else the window claims still go to that episode; the session's next
+`start_work` replaces the pin, episode and all.
+
+A pin from an older bridge, a reply without a number and the checkout pin
+from `fulcrum work` name no episode; their turns omit the field and the
+server chooses as before. `--dry-run` prints the episode beside the window,
+and lists each turn it would post.

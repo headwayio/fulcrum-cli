@@ -140,11 +140,18 @@ func (h *hookStop) pin(t *testing.T, pin agenthook.SessionPin) {
 
 // posted takes the turn indices the server received since the last call.
 func (h *hookStop) posted() []int {
+	indices, _ := h.postedTurns()
+	return indices
+}
+
+// postedTurns takes the turn indices the server received since the last
+// call, and the episode each named.
+func (h *hookStop) postedTurns() (indices, episodes []int) {
 	h.srv.mu.Lock()
 	defer h.srv.mu.Unlock()
-	got := h.srv.telemetry
-	h.srv.telemetry = nil
-	return got
+	indices, episodes = h.srv.telemetry, h.srv.telemetryEpisodes
+	h.srv.telemetry, h.srv.telemetryEpisodes = nil, nil
+	return indices, episodes
 }
 
 func (h *hookStop) watermark() int {
@@ -274,23 +281,53 @@ func TestHookStopPostsEverythingForAPinWithoutAWindow(t *testing.T) {
 	}
 	writeTranscript(t, h.transcript, 10)
 	h.run(t)
-	if got := h.posted(); !reflect.DeepEqual(got, span(1, 10)) {
-		t.Fatalf("posted %v, want 1–10", got)
+	indices, episodes := h.postedTurns()
+	if !reflect.DeepEqual(indices, span(1, 10)) {
+		t.Fatalf("posted %v, want 1–10", indices)
+	}
+	if !reflect.DeepEqual(episodes, make([]int, 10)) {
+		t.Errorf("a pin that knows no episode named %v; the server should choose", episodes)
 	}
 	if got := h.watermark(); got != 10 {
 		t.Fatalf("watermark %d, want 10", got)
 	}
 }
 
+// A subagent's turns post when it hands back, after its own finish_work, by
+// which time a QA pass may have opened the card's next episode. The pin keeps
+// the episode its start_work opened, so every turn it posts names that one —
+// the finishing turn included — and the next start_work's episode takes over
+// with its window.
+func TestHookStopNamesThePinsEpisodeOnEveryTurn(t *testing.T) {
+	h := newHookStop(t)
+	h.pin(t, agenthook.SessionPin{Episode: 3, StartedAt: at(2, 10*time.Second), FinishedAt: at(4, 20*time.Second)})
+	writeTranscript(t, h.transcript, 6)
+	h.run(t)
+	indices, episodes := h.postedTurns()
+	if !reflect.DeepEqual(indices, span(2, 4)) || !reflect.DeepEqual(episodes, []int{3, 3, 3}) {
+		t.Fatalf("posted turns %v on episodes %v, want 2–4 all on episode 3", indices, episodes)
+	}
+
+	h.pin(t, agenthook.SessionPin{Episode: 5, StartedAt: at(7, 10*time.Second)})
+	writeTranscript(t, h.transcript, 8)
+	h.run(t)
+	indices, episodes = h.postedTurns()
+	if !reflect.DeepEqual(indices, []int{7, 8}) || !reflect.DeepEqual(episodes, []int{5, 5}) {
+		t.Fatalf("next window posted turns %v on episodes %v, want 7–8 on episode 5", indices, episodes)
+	}
+}
+
 func TestHookStopDryRunNamesTheWindowAndCounts(t *testing.T) {
 	h := newHookStop(t)
-	h.pin(t, agenthook.SessionPin{StartedAt: at(26, 10*time.Second), FinishedAt: at(30, 20*time.Second)})
+	h.pin(t, agenthook.SessionPin{Episode: 3, StartedAt: at(26, 10*time.Second), FinishedAt: at(30, 20*time.Second)})
 	writeTranscript(t, h.transcript, 40)
 
 	out, _ := h.run(t, "--dry-run")
 	for _, want := range []string{
 		"via the session pin",
 		"window:   2026-10-14T09:25:10Z → 2026-10-14T09:29:20Z",
+		"episode:  3\n",
+		"  turn 26: 2026-10-14T09:25:00Z → 2026-10-14T09:25:30Z, 30s, 1 calls\n",
 		"40 in the transcript, 40 not yet recorded: 5 to post, 35 outside the window",
 		"active:   2m30s in the turns to post",
 		"in 50, out 100",

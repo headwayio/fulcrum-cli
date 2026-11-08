@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -236,10 +237,18 @@ func (a *App) runHookStop(transcriptFlag, cwdFlag, sessionFlag string, dryRun bo
 	if len(plan.post) == 0 {
 		return nil
 	}
+	// The episode the session's start_work opened, when its pin knows it:
+	// these turns may post after its finish_work, once another episode is
+	// open on the card, and must not land on that one.
+	episode := 0
+	if window != nil {
+		episode = window.Episode
+	}
 	pending := make([]api.TelemetryTurn, 0, len(plan.post))
 	for _, turn := range plan.post {
 		pending = append(pending, api.TelemetryTurn{
 			TurnIndex: turn.Index,
+			Episode:   episode,
 			// Nano, not RFC3339: the second-precision format truncates both
 			// ends of every turn, which moved a real session's active time by
 			// three seconds and would matter far more on short turns.
@@ -338,8 +347,14 @@ func (a *App) reportDryRun(work *projectctx.CurrentWork, pinSource, sessionRef s
 	fmt.Fprintf(a.Stdout, "card:     %s (feature %d, project %d) via the %s pin\n", work.Feature, work.FeatureID, work.ProjectID, pinSource)
 	fmt.Fprintf(a.Stdout, "session:  %s\n", sessionRef)
 	fmt.Fprintf(a.Stdout, "window:   %s\n", describeWindow(window))
+	fmt.Fprintf(a.Stdout, "episode:  %s\n", describeEpisode(window))
 	fmt.Fprintf(a.Stdout, "turns:    %d in the transcript, %d not yet recorded: %d to post, %d outside the window\n",
 		len(turns), len(plan.post)+plan.skipped, len(plan.post), plan.skipped)
+	for _, turn := range plan.post {
+		fmt.Fprintf(a.Stdout, "  turn %d: %s → %s, %s, %d calls\n", turn.Index,
+			turn.StartedAt.UTC().Format(time.RFC3339), turn.EndedAt.UTC().Format(time.RFC3339),
+			turn.Duration().Round(time.Second), turn.Calls)
+	}
 
 	var active time.Duration
 	var input, output, cacheCreation, cacheRead int64
@@ -369,6 +384,15 @@ func describeWindow(window *agenthook.SessionPin) string {
 		to = window.FinishedAt.UTC().Format(time.RFC3339)
 	}
 	return from + " → " + to
+}
+
+// describeEpisode names the episode the turns will be posted to, for the
+// operator reading a dry run.
+func describeEpisode(window *agenthook.SessionPin) string {
+	if window == nil || window.Episode == 0 {
+		return "not named (the server picks the card's open episode, else its latest)"
+	}
+	return strconv.Itoa(window.Episode)
 }
 
 // readHookPayload decodes the harness's JSON from stdin. An empty or

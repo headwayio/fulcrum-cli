@@ -87,6 +87,30 @@ Scripted setups skip `login` entirely — the Ruby reference client's exact
 four env vars work here too: `FULCRUM_URL`, `FULCRUM_API_TOKEN`,
 `FULCRUM_ORG_ID`, `FULCRUM_SKILLS_DIR`.
 
+## Agent time and tokens
+
+`fulcrum mcp install` registers the MCP bridge and a hook that records an
+agent's work on the card it is working. When a session calls `start_work`
+through the bridge, the bridge pins the session to that card and to the
+episode the call opened; the hook then reads the session's transcript each
+time the agent hands back and posts its new turns to that episode, even when
+they arrive after `finish_work`.
+
+A turn runs from the input that woke the agent to its last response before
+it handed back. In OMP that input can be a prompt, an IRC message or a
+background job's result: a message that wakes an idle subagent starts a new
+turn, while one that arrives mid-run, with tools still pending, is part of
+the current one.
+
+To see what a session would record without posting anything:
+
+```sh
+fulcrum hook stop --dry-run --session <session id> --transcript <file.jsonl> --cwd <checkout>
+```
+
+It prints the card, the pin's window and episode, each turn it would post,
+and their active time and tokens.
+
 ## Design commitments
 
 - **Nothing leaves your machine without an explicit confirmation.** Publishing

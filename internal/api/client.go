@@ -552,11 +552,13 @@ func (c *Client) rpc(ctx context.Context, method string, params map[string]any, 
 // receipt time beside them — the thing being measured is reporting on itself,
 // so the two must stay separable. Token fields are omitted when zero rather
 // than sent as 0, because "no cache read" and "we did not measure" are
-// different claims.
+// different claims. Episode is omitted when unknown, and the server puts the
+// turn on the card's open episode, else its latest.
 type TelemetryTurn struct {
 	TurnIndex           int    `json:"turn_index"`
 	StartedAt           string `json:"started_at"`
 	EndedAt             string `json:"ended_at"`
+	Episode             int    `json:"episode,omitempty"`
 	InputTokens         int64  `json:"input_tokens,omitempty"`
 	OutputTokens        int64  `json:"output_tokens,omitempty"`
 	CacheCreationTokens int64  `json:"cache_creation_tokens,omitempty"`

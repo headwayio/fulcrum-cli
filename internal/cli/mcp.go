@@ -17,7 +17,7 @@ func (a *App) mcpCmd() *cobra.Command {
 		Use:   "mcp",
 		Short: "Serve Fulcrum to a coding harness over the Model Context Protocol",
 		Long: "Runs a Model Context Protocol server on stdin/stdout, so Claude Code,\n" +
-			"Codex, or Kimi Code can pull Fulcrum context while you work.\n\n" +
+			"Codex, Kimi Code or OMP can pull Fulcrum context while you work.\n\n" +
 			"You do not run this yourself — a harness launches it. Register it with\n" +
 			"`fulcrum mcp install` in the project you are working on.\n\n" +
 			"The tools come from your Fulcrum server, not from this binary, so a tool\n" +
@@ -55,7 +55,10 @@ func (a *App) runMCP() error {
 		return exitf(ExitError, "cannot determine the working directory: %v", err)
 	}
 
-	server, err := mcpserver.New(ctx, a.Version, client, workingDir)
+	// Session pins land beside the telemetry watermark. A missing config dir
+	// only disables pinning; the bridge itself still serves.
+	pinDir, _ := a.configDir()
+	server, err := mcpserver.New(ctx, a.Version, client, workingDir, pinDir)
 	if err != nil {
 		return wrapAPIError(err)
 	}

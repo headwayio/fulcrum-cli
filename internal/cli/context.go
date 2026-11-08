@@ -130,6 +130,11 @@ func (a *App) writeContext(client *api.Client, projectID int64, into string, wit
 // ensureGitignore keeps the context out of version control. It carries a
 // project's priced backlog; committing it would push that into every clone
 // and every fork. Reports whether it added the entry.
+//
+// Any line that already ignores the directory counts — `.fulcrum`,
+// `.fulcrum/`, or the root-anchored `/.fulcrum/` a developer wrote by hand —
+// because appending beside one of those does nothing except dirty the
+// working tree on every `fulcrum work`.
 func ensureGitignore(projectDir string) (bool, error) {
 	path := filepath.Join(projectDir, ".gitignore")
 	existing, err := os.ReadFile(path)
@@ -139,7 +144,7 @@ func ensureGitignore(projectDir string) (bool, error) {
 
 	entry := ContextDir + "/"
 	for _, line := range strings.Split(string(existing), "\n") {
-		switch strings.TrimSpace(line) {
+		switch strings.TrimPrefix(strings.TrimSpace(line), "/") {
 		case entry, ContextDir:
 			return false, nil
 		}

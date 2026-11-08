@@ -25,11 +25,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/headwayio/fulcrum-cli/internal/agenthook"
 	"github.com/headwayio/fulcrum-cli/internal/api"
 	"github.com/headwayio/fulcrum-cli/internal/projectctx"
 )
@@ -46,6 +51,13 @@ type Deps interface {
 type Server struct {
 	deps  Deps
 	local *projectctx.Local
+	// pinDir is the user's config dir, where a session pin is written when
+	// start_work passes through with a session_ref. Empty disables that.
+	pinDir string
+	// pinMu serializes the pin writes. The SDK handles tool calls
+	// concurrently, and finish_work's read-modify-write of a pin must not
+	// interleave with a start_work writing the same session's pin.
+	pinMu sync.Mutex
 }
 
 // New fetches the catalogue and builds a server exposing it, plus the local
@@ -55,7 +67,7 @@ type Server struct {
 // tools/list when they connect and a harness session is short-lived relative
 // to a deploy. A tool added server-side reaches an already-running session on
 // its next restart, which is the same cadence as any other config change.
-func New(ctx context.Context, version string, deps Deps, workingDir string) (*mcp.Server, error) {
+func New(ctx context.Context, version string, deps Deps, workingDir, pinDir string) (*mcp.Server, error) {
 	definitions, err := deps.McpTools(ctx)
 	if err != nil {
 		return nil, err
@@ -66,7 +78,7 @@ func New(ctx context.Context, version string, deps Deps, workingDir string) (*mc
 	local, _ := projectctx.Resolve(workingDir)
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "fulcrum", Version: version}, nil)
-	bridge := &Server{deps: deps, local: local}
+	bridge := &Server{deps: deps, local: local, pinDir: pinDir}
 
 	for _, definition := range definitions {
 		bridge.addRemote(server, definition)
@@ -98,15 +110,123 @@ func (s *Server) addRemote(server *mcp.Server, definition api.ToolDefinition) {
 			arguments["project"] = strconv.FormatInt(s.local.ProjectID, 10)
 		}
 
+		// Taken before the call is forwarded: the window opens when the
+		// session asked for the episode, which is within the turn that asked.
+		calledAt := time.Now().UTC()
 		result, err := s.deps.McpCall(ctx, definition.Name, arguments)
 		if err != nil {
 			return failure("%s", describeCallError(definition.Name, err)), nil
+		}
+		if !result.IsError {
+			switch definition.Name {
+			case "start_work":
+				s.pinSession(ctx, arguments, result.Text(), calledAt)
+			case "finish_work":
+				s.finishSession(arguments)
+			}
 		}
 		return &mcp.CallToolResult{
 			IsError: result.IsError,
 			Content: []mcp.Content{&mcp.TextContent{Text: result.Text()}},
 		}, nil
 	})
+}
+
+// episodeRole lifts the role the server settled on out of start_work's reply
+// ("Started episode 3 on feature 1994 as Development. …"), so a session that
+// let the role default still posts its turns under the right one.
+var episodeRole = regexp.MustCompile(`\bas ([^.\n]+)\.`)
+
+// episodeNumber lifts the number of the episode start_work opened out of the
+// same reply, so the session's turns name that episode even when they post
+// after its finish_work, and after another episode has opened on the card.
+var episodeNumber = regexp.MustCompile(`\bStarted episode (\d+)\b`)
+
+// pinSession records which card a harness session is working, keyed by the
+// session_ref the session passed to start_work — the same reference the
+// telemetry hook sees as the transcript's session id. Without a session_ref
+// there is nothing to key on and the checkout pin stays the answer. The pin
+// opens a fresh window at startedAt, replacing whatever the session pinned
+// before.
+//
+// The card's numeric ids come from its brief, exactly as `fulcrum work`
+// takes them, because the hook that reads the pin fires on its own and has no
+// way to turn a short id into a row. So does the short id the pin names the
+// card by: start_work accepts "1994" and "FUL-17" alike, and so does
+// finish_work, so the pin keeps the canonical short id beside the numeric one
+// and a finish in either form closes it. Every failure is a stderr diagnostic
+// and nothing else: start_work already succeeded, and a pin is a courtesy to
+// the telemetry, not a condition of the call.
+func (s *Server) pinSession(ctx context.Context, arguments map[string]any, reply string, startedAt time.Time) {
+	sessionRef := stringArgument(arguments, "session_ref")
+	feature := stringArgument(arguments, "feature")
+	if s.pinDir == "" || sessionRef == "" || feature == "" {
+		return
+	}
+
+	brief, err := s.deps.McpCall(ctx, "get_feature", map[string]any{"feature": feature})
+	if err != nil || brief.IsError {
+		fmt.Fprintf(os.Stderr, "fulcrum: start_work succeeded but the session could not be pinned to %s: %s\n",
+			feature, describeBriefFailure(brief, err))
+		return
+	}
+	pin := agenthook.SessionPin{
+		Feature:   projectctx.BriefField(brief.Text(), "feature"),
+		FeatureID: projectctx.BriefID(brief.Text(), "feature_id"),
+		ProjectID: projectctx.BriefID(brief.Text(), "project_id"),
+		Role:      stringArgument(arguments, "role"),
+		StartedAt: startedAt,
+		UpdatedAt: time.Now().UTC(),
+	}
+	if pin.Feature == "" {
+		pin.Feature = feature
+	}
+	if pin.Role == "" {
+		if match := episodeRole.FindStringSubmatch(reply); match != nil {
+			pin.Role = strings.TrimSpace(match[1])
+		}
+	}
+	if match := episodeNumber.FindStringSubmatch(reply); match != nil {
+		pin.Episode, _ = strconv.Atoi(match[1])
+	}
+	if pin.FeatureID == 0 || pin.ProjectID == 0 {
+		fmt.Fprintf(os.Stderr, "fulcrum: start_work succeeded but %s's brief carries no ids, so the session was not pinned\n", feature)
+		return
+	}
+	s.pinMu.Lock()
+	defer s.pinMu.Unlock()
+	if err := agenthook.WriteSessionPin(s.pinDir, sessionRef, pin); err != nil {
+		fmt.Fprintf(os.Stderr, "fulcrum: could not pin session %s to %s: %v\n", sessionRef, feature, err)
+	}
+}
+
+// finishSession closes the window of the session's pin when finish_work names
+// the card the pin is for, so the session's later turns stop landing on it.
+// The finishing turn itself still posts: it started before the window closed.
+// Like pinSession, a failure is a diagnostic and nothing more.
+func (s *Server) finishSession(arguments map[string]any) {
+	sessionRef := stringArgument(arguments, "session_ref")
+	feature := stringArgument(arguments, "feature")
+	if s.pinDir == "" || sessionRef == "" || feature == "" {
+		return
+	}
+	s.pinMu.Lock()
+	defer s.pinMu.Unlock()
+	if _, err := agenthook.FinishSessionPin(s.pinDir, sessionRef, feature, time.Now()); err != nil {
+		fmt.Fprintf(os.Stderr, "fulcrum: finish_work succeeded but session %s's pin could not be closed: %v\n", sessionRef, err)
+	}
+}
+
+func describeBriefFailure(brief *api.ToolResult, err error) string {
+	if err != nil {
+		return err.Error()
+	}
+	return brief.Text()
+}
+
+func stringArgument(arguments map[string]any, key string) string {
+	value, _ := arguments[key].(string)
+	return strings.TrimSpace(value)
 }
 
 // addWhereAmI is the one tool implemented locally, because it is the one

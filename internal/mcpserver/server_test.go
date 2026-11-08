@@ -2,13 +2,17 @@ package mcpserver_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/headwayio/fulcrum-cli/internal/agenthook"
 	"github.com/headwayio/fulcrum-cli/internal/api"
 	"github.com/headwayio/fulcrum-cli/internal/mcpserver"
 	"github.com/headwayio/fulcrum-cli/internal/projectctx"
@@ -16,10 +20,14 @@ import (
 
 // fakeDeps stands in for the server, recording what the bridge forwarded.
 type fakeDeps struct {
-	tools  []api.ToolDefinition
+	tools []api.ToolDefinition
+	// mu guards calls: the SDK serves tool calls concurrently.
+	mu     sync.Mutex
 	calls  []recordedCall
 	result *api.ToolResult
 	err    error
+	// replies, when set, answers a tool by name instead of the generic text.
+	replies map[string]string
 }
 
 type recordedCall struct {
@@ -32,12 +40,17 @@ func (f *fakeDeps) McpTools(context.Context) ([]api.ToolDefinition, error) {
 }
 
 func (f *fakeDeps) McpCall(_ context.Context, name string, arguments map[string]any) (*api.ToolResult, error) {
+	f.mu.Lock()
 	f.calls = append(f.calls, recordedCall{name: name, arguments: arguments})
+	f.mu.Unlock()
 	if f.err != nil {
 		return nil, f.err
 	}
 	if f.result != nil {
 		return f.result, nil
+	}
+	if reply, ok := f.replies[name]; ok {
+		return &api.ToolResult{Content: []api.ToolContent{{Type: "text", Text: reply}}}, nil
 	}
 	return &api.ToolResult{Content: []api.ToolContent{{Type: "text", Text: "served " + name}}}, nil
 }
@@ -82,9 +95,16 @@ func linkedCheckout(t *testing.T) string {
 // assertions run through actual protocol traffic rather than direct calls.
 func connect(t *testing.T, deps mcpserver.Deps, workingDir string) *mcp.ClientSession {
 	t.Helper()
+	return connectWithPins(t, deps, workingDir, "")
+}
+
+// connectWithPins also hands the bridge a config dir, where start_work pins
+// land.
+func connectWithPins(t *testing.T, deps mcpserver.Deps, workingDir, pinDir string) *mcp.ClientSession {
+	t.Helper()
 	ctx := context.Background()
 
-	server, err := mcpserver.New(ctx, "test", deps, workingDir)
+	server, err := mcpserver.New(ctx, "test", deps, workingDir, pinDir)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -309,5 +329,234 @@ func TestWhereAmIIsQuietWhenNothingIsPinned(t *testing.T) {
 	text, _ := callText(t, session, "where_am_i", map[string]any{})
 	if strings.Contains(text, "Currently working") {
 		t.Errorf("claimed a pin that does not exist: %s", text)
+	}
+}
+
+func workCatalogue() []api.ToolDefinition {
+	return append(catalogue(),
+		api.ToolDefinition{Name: "start_work", Description: "opens an episode", InputSchema: map[string]any{
+			"type": "object", "properties": map[string]any{"feature": map[string]any{"type": "string"}}, "required": []any{"feature"},
+		}},
+		api.ToolDefinition{Name: "finish_work", Description: "closes an episode", InputSchema: map[string]any{
+			"type": "object", "properties": map[string]any{"feature": map[string]any{"type": "string"}}, "required": []any{"feature"},
+		}},
+		api.ToolDefinition{Name: "get_feature", Description: "brief", InputSchema: map[string]any{
+			"type": "object", "properties": map[string]any{"feature": map[string]any{"type": "string"}}, "required": []any{"feature"},
+		}},
+	)
+}
+
+const briefForPin = "---\nname: feature-brief\nproject: Embr - MVP\nproject_id: 24\nfeature: FUL-17\nfeature_id: 1994\n---\n\n# FUL-17 — Dynamic field mapping\n"
+
+// A session that names itself when it starts work is pinned by that name, so
+// the telemetry hook can put its turns on this card even when the checkout is
+// pinned to another one — which is how parallel subagents stay apart.
+func TestStartWorkWithASessionRefPinsTheSession(t *testing.T) {
+	deps := &fakeDeps{tools: workCatalogue(), replies: map[string]string{
+		"start_work":  "Started episode 3 on feature 1994 as Development. Call finish_work when you stop.",
+		"get_feature": briefForPin,
+	}}
+	pinDir := t.TempDir()
+	session := connectWithPins(t, deps, linkedCheckout(t), pinDir)
+
+	text, isError := callText(t, session, "start_work", map[string]any{"feature": "FUL-17", "session_ref": "sess-a"})
+	if isError || !strings.Contains(text, "Started episode") {
+		t.Fatalf("start_work reply lost: %q (error=%v)", text, isError)
+	}
+
+	pin := agenthook.ReadSessionPin(pinDir, "sess-a")
+	if pin == nil {
+		t.Fatal("no session pin was written")
+	}
+	if pin.FeatureID != 1994 || pin.ProjectID != 24 || pin.Feature != "FUL-17" {
+		t.Errorf("pin carries the wrong ids: %+v", pin)
+	}
+	if pin.Role != "Development" {
+		t.Errorf("role should come from the server's reply when the call left it out: %q", pin.Role)
+	}
+	if pin.Episode != 3 {
+		t.Errorf("episode should come from the server's reply: %d", pin.Episode)
+	}
+}
+
+func TestStartWorkWithoutASessionRefLeavesTheCheckoutPinInCharge(t *testing.T) {
+	deps := &fakeDeps{tools: workCatalogue(), replies: map[string]string{"start_work": "Started episode 1 on feature 1994 as Development.", "get_feature": briefForPin}}
+	pinDir := t.TempDir()
+	session := connectWithPins(t, deps, linkedCheckout(t), pinDir)
+
+	callText(t, session, "start_work", map[string]any{"feature": "FUL-17"})
+
+	if entries, _ := os.ReadDir(filepath.Join(pinDir, agenthook.PinsDir)); len(entries) != 0 {
+		t.Errorf("a pin was written with nothing to key it on: %v", entries)
+	}
+	for _, call := range deps.calls {
+		if call.name == "get_feature" {
+			t.Error("the brief was fetched although no pin could be written")
+		}
+	}
+}
+
+func TestAFailedStartWorkPinsNothing(t *testing.T) {
+	deps := &fakeDeps{tools: workCatalogue(), err: &api.Error{Code: "insufficient_scope", ServerMessage: "no"}}
+	pinDir := t.TempDir()
+	session := connectWithPins(t, deps, linkedCheckout(t), pinDir)
+
+	callText(t, session, "start_work", map[string]any{"feature": "FUL-17", "session_ref": "sess-b"})
+
+	if agenthook.ReadSessionPin(pinDir, "sess-b") != nil {
+		t.Error("a session was pinned to work that never started")
+	}
+}
+
+// start_work opens the pin's window at the moment it was called, and the
+// session's finish_work for the same card closes it; a finish_work for any
+// other card leaves it open.
+func TestStartAndFinishWorkBoundTheSessionPinsWindow(t *testing.T) {
+	deps := &fakeDeps{tools: workCatalogue(), replies: map[string]string{
+		"start_work":  "Started episode 3 on feature 1994 as Development.",
+		"finish_work": "Finished episode 3.",
+		"get_feature": briefForPin,
+	}}
+	pinDir := t.TempDir()
+	session := connectWithPins(t, deps, linkedCheckout(t), pinDir)
+
+	before := time.Now()
+	callText(t, session, "start_work", map[string]any{"feature": "FUL-17", "session_ref": "sess-qa"})
+	after := time.Now()
+	pin := agenthook.ReadSessionPin(pinDir, "sess-qa")
+	if pin == nil || pin.StartedAt.Before(before) || pin.StartedAt.After(after) || !pin.FinishedAt.IsZero() {
+		t.Fatalf("start_work did not open a window between %v and %v: %+v", before, after, pin)
+	}
+	started := pin.StartedAt
+
+	callText(t, session, "finish_work", map[string]any{"feature": "FUL-18", "session_ref": "sess-qa"})
+	if pin := agenthook.ReadSessionPin(pinDir, "sess-qa"); !pin.FinishedAt.IsZero() {
+		t.Fatalf("finish_work for another card closed the window: %+v", pin)
+	}
+
+	callText(t, session, "finish_work", map[string]any{"feature": "FUL-17", "session_ref": "sess-qa"})
+	pin = agenthook.ReadSessionPin(pinDir, "sess-qa")
+	if pin.FinishedAt.IsZero() || pin.FinishedAt.Before(started) || !pin.StartedAt.Equal(started) {
+		t.Fatalf("finish_work did not close the window: %+v", pin)
+	}
+	if pin.Episode != 3 {
+		t.Errorf("finish_work lost the episode the turns still post to: %+v", pin)
+	}
+
+	// The next start_work replaces the pin with a fresh, open window.
+	callText(t, session, "start_work", map[string]any{"feature": "FUL-17", "session_ref": "sess-qa"})
+	pin = agenthook.ReadSessionPin(pinDir, "sess-qa")
+	if !pin.FinishedAt.IsZero() || !pin.StartedAt.After(started) {
+		t.Errorf("start_work did not open a fresh window: %+v", pin)
+	}
+}
+
+// start_work and finish_work both accept the short id and the numeric id, so
+// a session may start in one form and finish in the other; the pin names the
+// card by the brief's short id and matches a finish in either.
+func TestFinishWorkClosesTheWindowWhicheverIDFormEachCallUsed(t *testing.T) {
+	for _, tc := range []struct{ start, finish string }{
+		{"1994", "FUL-17"},
+		{"FUL-17", "1994"},
+		{"ful-17", "FUL-17"},
+	} {
+		deps := &fakeDeps{tools: workCatalogue(), replies: map[string]string{
+			"start_work":  "Started episode 3 on feature 1994 as Development.",
+			"finish_work": "Finished episode 3.",
+			"get_feature": briefForPin,
+		}}
+		pinDir := t.TempDir()
+		session := connectWithPins(t, deps, linkedCheckout(t), pinDir)
+
+		callText(t, session, "start_work", map[string]any{"feature": tc.start, "session_ref": "sess-qa"})
+		pin := agenthook.ReadSessionPin(pinDir, "sess-qa")
+		if pin == nil || pin.Feature != "FUL-17" || pin.FeatureID != 1994 {
+			t.Fatalf("start %q: pin should carry the brief's short id and the numeric id: %+v", tc.start, pin)
+		}
+
+		callText(t, session, "finish_work", map[string]any{"feature": tc.finish, "session_ref": "sess-qa"})
+		if pin := agenthook.ReadSessionPin(pinDir, "sess-qa"); pin.FinishedAt.IsZero() {
+			t.Errorf("start %q, finish %q: the window was left open: %+v", tc.start, tc.finish, pin)
+		}
+	}
+}
+
+// A brief without a short id still pins, by the reference start_work was
+// given.
+func TestAPinFallsBackToTheStartReferenceWhenTheBriefNamesNoShortID(t *testing.T) {
+	deps := &fakeDeps{tools: workCatalogue(), replies: map[string]string{
+		"start_work":  "Started episode 3 on feature 1994 as Development.",
+		"get_feature": "---\nproject_id: 24\nfeature_id: 1994\n---\n",
+	}}
+	pinDir := t.TempDir()
+	session := connectWithPins(t, deps, linkedCheckout(t), pinDir)
+
+	callText(t, session, "start_work", map[string]any{"feature": "FUL-17", "session_ref": "sess-qa"})
+	if pin := agenthook.ReadSessionPin(pinDir, "sess-qa"); pin == nil || pin.Feature != "FUL-17" {
+		t.Fatalf("pin should fall back to the start reference: %+v", pin)
+	}
+}
+
+// The SDK serves tool calls concurrently, so subagents starting and finishing
+// at once must each end up with their own closed window and no torn or lost
+// pin. Run under -race.
+func TestConcurrentStartsAndFinishesKeepEverySessionsPin(t *testing.T) {
+	deps := &fakeDeps{tools: workCatalogue(), replies: map[string]string{
+		"start_work":  "Started episode 3 on feature 1994 as Development.",
+		"finish_work": "Finished episode 3.",
+		"get_feature": briefForPin,
+	}}
+	pinDir := t.TempDir()
+	session := connectWithPins(t, deps, linkedCheckout(t), pinDir)
+
+	call := func(name string, arguments map[string]any) error {
+		result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: arguments})
+		if err == nil && result.IsError {
+			err = fmt.Errorf("%s errored", name)
+		}
+		return err
+	}
+	const sessions = 16
+	var wg sync.WaitGroup
+	for n := range sessions {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ref := fmt.Sprintf("sess-%d", n)
+			if err := call("start_work", map[string]any{"feature": "FUL-17", "session_ref": ref}); err != nil {
+				t.Error(err)
+				return
+			}
+			if err := call("finish_work", map[string]any{"feature": "1994", "session_ref": ref}); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	for n := range sessions {
+		pin := agenthook.ReadSessionPin(pinDir, fmt.Sprintf("sess-%d", n))
+		if pin == nil || pin.StartedAt.IsZero() || pin.FinishedAt.IsZero() {
+			t.Errorf("sess-%d: pin lost or window left open: %+v", n, pin)
+		}
+	}
+	entries, _ := os.ReadDir(filepath.Join(pinDir, agenthook.PinsDir))
+	if len(entries) != sessions {
+		t.Errorf("want one pin per session and no stray temp files, got %d entries", len(entries))
+	}
+}
+
+func TestAFailedFinishWorkLeavesTheWindowOpen(t *testing.T) {
+	deps := &fakeDeps{tools: workCatalogue(), err: &api.Error{Code: "insufficient_scope", ServerMessage: "no"}}
+	pinDir := t.TempDir()
+	started := time.Now().UTC()
+	if err := agenthook.WriteSessionPin(pinDir, "sess-qa", agenthook.SessionPin{Feature: "FUL-17", FeatureID: 1994, ProjectID: 24, StartedAt: started}); err != nil {
+		t.Fatal(err)
+	}
+	session := connectWithPins(t, deps, linkedCheckout(t), pinDir)
+
+	callText(t, session, "finish_work", map[string]any{"feature": "FUL-17", "session_ref": "sess-qa"})
+	if pin := agenthook.ReadSessionPin(pinDir, "sess-qa"); !pin.FinishedAt.IsZero() {
+		t.Errorf("a failed finish_work closed the window: %+v", pin)
 	}
 }

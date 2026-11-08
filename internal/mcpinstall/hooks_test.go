@@ -25,8 +25,13 @@ func claudeSettings(t *testing.T, dir string) map[string]any {
 
 func stopCommands(t *testing.T, document map[string]any) []string {
 	t.Helper()
+	return eventCommands(t, document, mcpinstall.HookEvent)
+}
+
+func eventCommands(t *testing.T, document map[string]any, event string) []string {
+	t.Helper()
 	hooks, _ := document["hooks"].(map[string]any)
-	matchers, _ := hooks[mcpinstall.HookEvent].([]any)
+	matchers, _ := hooks[event].([]any)
 
 	var found []string
 	for _, entry := range matchers {
@@ -204,7 +209,7 @@ func TestInstallHooksWritesTheOmpFactoryAtUserScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the factory was not written under the home dir: %v", err)
 	}
-	for _, want := range []string{`"` + opts.Command + `"`, "hook stop", "session_stop", "export default function"} {
+	for _, want := range []string{`"` + opts.Command + `"`, "hook stop", "session_stop", "agent_end", "tool_call", "session_ref", "export default function"} {
 		if !strings.Contains(string(content), want) {
 			t.Errorf("factory lacks %q", want)
 		}
@@ -253,5 +258,71 @@ func TestInstallHooksDoesNotClobberAForeignFile(t *testing.T) {
 	}
 	if results[0].Changed || !strings.Contains(results[0].Note, "left alone") {
 		t.Errorf("foreign file was not protected: %+v", results[0])
+	}
+}
+
+// Subagent work is a separate transcript in Claude Code, announced by its own
+// event; and the session can only be named on start_work by a tool hook. One
+// install registers all three, and an older settings file that only knew Stop
+// is brought up to date without a second Stop.
+func TestInstallHooksRegistersSubagentAndToolUseHooks(t *testing.T) {
+	opts := options(t)
+	if _, err := mcpinstall.InstallHooks([]string{mcpinstall.TargetClaude}, opts); err != nil {
+		t.Fatal(err)
+	}
+	document := claudeSettings(t, opts.ProjectDir)
+
+	if got := eventCommands(t, document, mcpinstall.SubagentHookEvent); len(got) != 1 || !strings.Contains(got[0], "hook stop") {
+		t.Errorf("SubagentStop not registered: %v", got)
+	}
+	tool := eventCommands(t, document, mcpinstall.ToolUseHookEvent)
+	if len(tool) != 1 || !strings.Contains(tool[0], "hook tool-use") {
+		t.Fatalf("PreToolUse not registered: %v", tool)
+	}
+	hooks, _ := document["hooks"].(map[string]any)
+	group, _ := hooks[mcpinstall.ToolUseHookEvent].([]any)[0].(map[string]any)
+	if group["matcher"] != mcpinstall.ToolUseMatcher {
+		t.Errorf("PreToolUse must be narrowed to the work tools: %v", group["matcher"])
+	}
+
+	// Second install: nothing changes, nothing doubles.
+	results, err := mcpinstall.InstallHooks([]string{mcpinstall.TargetClaude}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results[0].Changed {
+		t.Error("a complete install reported a change")
+	}
+	for _, event := range []string{mcpinstall.HookEvent, mcpinstall.SubagentHookEvent, mcpinstall.ToolUseHookEvent} {
+		if got := eventCommands(t, claudeSettings(t, opts.ProjectDir), event); len(got) != 1 {
+			t.Errorf("%s doubled: %v", event, got)
+		}
+	}
+}
+
+func TestInstallHooksUpgradesAStopOnlySettingsFile(t *testing.T) {
+	opts := options(t)
+	path := filepath.Join(opts.ProjectDir, ".claude", mcpinstall.SettingsFile)
+	old := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/old/fulcrum hook stop"}]}]}}`
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := mcpinstall.InstallHooks([]string{mcpinstall.TargetClaude}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !results[0].Changed {
+		t.Fatal("the two missing events were not added")
+	}
+	document := claudeSettings(t, opts.ProjectDir)
+	if got := eventCommands(t, document, mcpinstall.HookEvent); len(got) != 1 || got[0] != "/old/fulcrum hook stop" {
+		t.Errorf("the existing Stop hook was touched: %v", got)
+	}
+	if len(eventCommands(t, document, mcpinstall.SubagentHookEvent)) != 1 || len(eventCommands(t, document, mcpinstall.ToolUseHookEvent)) != 1 {
+		t.Error("new events missing after upgrade")
 	}
 }

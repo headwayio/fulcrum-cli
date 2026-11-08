@@ -148,7 +148,7 @@ func TestUnparseableSettingsAreLeftAlone(t *testing.T) {
 	}
 }
 
-// Claiming all three harnesses report tokens when only one does would be the
+// Claiming every harness reports tokens when only some do would be the
 // product lying about its own coverage.
 func TestHarnessesThatRecordNothingSaySo(t *testing.T) {
 	opts := options(t)
@@ -159,9 +159,9 @@ func TestHarnessesThatRecordNothingSaySo(t *testing.T) {
 	}
 	for _, result := range results {
 		switch result.Target {
-		case mcpinstall.TargetClaude:
+		case mcpinstall.TargetClaude, mcpinstall.TargetOmp:
 			if !result.Changed {
-				t.Error("claude should have been installed")
+				t.Errorf("%s should have been installed", result.Target)
 			}
 		default:
 			if result.Changed {
@@ -185,5 +185,73 @@ func TestHooksAreNotWrittenToTheCommittedSettings(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(opts.ProjectDir, ".claude", "settings.json")); !os.IsNotExist(err) {
 		t.Error("the shared settings.json was written to")
+	}
+}
+
+func TestInstallHooksWritesTheOmpFactoryAtUserScope(t *testing.T) {
+	opts := options(t)
+
+	results, err := mcpinstall.InstallHooks([]string{mcpinstall.TargetOmp}, opts)
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if !results[0].Changed {
+		t.Fatalf("nothing was written: %+v", results[0])
+	}
+
+	path := filepath.Join(opts.HomeDir, filepath.FromSlash(mcpinstall.OmpHookFile))
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the factory was not written under the home dir: %v", err)
+	}
+	for _, want := range []string{`"` + opts.Command + `"`, "hook stop", "session_stop", "export default function"} {
+		if !strings.Contains(string(content), want) {
+			t.Errorf("factory lacks %q", want)
+		}
+	}
+	if entries, _ := os.ReadDir(filepath.Join(opts.ProjectDir, ".omp")); len(entries) != 0 {
+		t.Errorf("the hook must not land in the project: %v", entries)
+	}
+}
+
+func TestInstallHooksLeavesAnExistingOmpFactoryAlone(t *testing.T) {
+	opts := options(t)
+	if _, err := mcpinstall.InstallHooks([]string{mcpinstall.TargetOmp}, opts); err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+	path := filepath.Join(opts.HomeDir, filepath.FromSlash(mcpinstall.OmpHookFile))
+	edited := []byte("// mine\nconst x = 'hook stop';\n")
+	if err := os.WriteFile(path, edited, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := mcpinstall.InstallHooks([]string{mcpinstall.TargetOmp}, opts)
+	if err != nil {
+		t.Fatalf("second install: %v", err)
+	}
+	if results[0].Changed {
+		t.Errorf("an edited factory was overwritten")
+	}
+	if content, _ := os.ReadFile(path); string(content) != string(edited) {
+		t.Errorf("file changed: %q", content)
+	}
+}
+
+func TestInstallHooksDoesNotClobberAForeignFile(t *testing.T) {
+	opts := options(t)
+	path := filepath.Join(opts.HomeDir, filepath.FromSlash(mcpinstall.OmpHookFile))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("export default function () {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := mcpinstall.InstallHooks([]string{mcpinstall.TargetOmp}, opts)
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if results[0].Changed || !strings.Contains(results[0].Note, "left alone") {
+		t.Errorf("foreign file was not protected: %+v", results[0])
 	}
 }

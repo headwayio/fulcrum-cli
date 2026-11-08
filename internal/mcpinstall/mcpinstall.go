@@ -1,9 +1,9 @@
 // Package mcpinstall registers `fulcrum mcp` with the coding harnesses a
 // project might be worked in.
 //
-// Three harnesses, two file formats, and one rule: every entry is
+// Four harnesses, two file formats, and one rule: every entry is
 // PROJECT-scoped, so it lives in the checkout and a teammate who clones it
-// gets the server for free.
+// gets the server for free. OMP reads the same .mcp.json Claude Code does.
 //
 // KIMI'S PATH IS A TRAP. `~/.kimi/mcp.json` belongs to the older Kimi CLI,
 // which is being phased out; Kimi CODE — the one that ships as `kimi` today —
@@ -27,11 +27,12 @@ const (
 	TargetClaude = "claude"
 	TargetCodex  = "codex"
 	TargetKimi   = "kimi"
+	TargetOmp    = "omp"
 )
 
 // AllTargets is the default: the same project is often opened in more than
 // one harness, and a developer should not have to decide which one counts.
-var AllTargets = []string{TargetClaude, TargetCodex, TargetKimi}
+var AllTargets = []string{TargetClaude, TargetCodex, TargetKimi, TargetOmp}
 
 // Result describes one target's outcome, so the caller can report what
 // actually changed rather than claiming it wrote everything.
@@ -63,7 +64,10 @@ func Install(targets []string, opts Options) ([]Result, error) {
 			err    error
 		)
 		switch target {
-		case TargetClaude:
+		case TargetClaude, TargetOmp:
+			// OMP reads the root .mcp.json as its portable fallback, so the
+			// Claude entry serves both; writing .omp/mcp.json as well would
+			// register the same server twice.
 			result, err = installJSON(target, filepath.Join(opts.ProjectDir, ".mcp.json"), opts)
 		case TargetKimi:
 			result, err = installJSON(target, filepath.Join(opts.ProjectDir, ".kimi-code", "mcp.json"), opts)

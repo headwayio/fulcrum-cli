@@ -41,11 +41,13 @@ func TestInstallWritesEveryHarness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
-	if len(results) != 3 {
-		t.Fatalf("expected 3 results, got %d", len(results))
+	if len(results) != len(mcpinstall.AllTargets) {
+		t.Fatalf("expected %d results, got %d", len(mcpinstall.AllTargets), len(results))
 	}
 	for _, result := range results {
-		if !result.Changed {
+		// OMP reads the .mcp.json the Claude target writes, so it alone
+		// reports the entry as already present on a first install.
+		if !result.Changed && result.Target != mcpinstall.TargetOmp {
 			t.Errorf("%s reported no change on a first install", result.Target)
 		}
 	}
@@ -208,5 +210,22 @@ func TestKimiIsInstalledWhereKimiCodeActuallyReads(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(opts.HomeDir, ".kimi", "mcp.json")); !os.IsNotExist(err) {
 		t.Error("wrote to ~/.kimi/mcp.json, which belongs to the retired Kimi CLI")
+	}
+}
+
+func TestInstallForOmpSharesTheClaudeEntry(t *testing.T) {
+	opts := options(t)
+	if _, err := mcpinstall.Install([]string{mcpinstall.TargetClaude}, opts); err != nil {
+		t.Fatalf("claude install: %v", err)
+	}
+	results, err := mcpinstall.Install([]string{mcpinstall.TargetOmp}, opts)
+	if err != nil {
+		t.Fatalf("omp install: %v", err)
+	}
+	if results[0].Changed {
+		t.Errorf("omp wrote a second entry instead of reusing .mcp.json: %+v", results[0])
+	}
+	if _, err := os.Stat(filepath.Join(opts.ProjectDir, ".omp", "mcp.json")); !os.IsNotExist(err) {
+		t.Errorf(".omp/mcp.json must not be written")
 	}
 }

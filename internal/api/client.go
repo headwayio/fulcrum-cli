@@ -215,7 +215,12 @@ type ProposalReceipt struct {
 // FeaturePushReceipt is the POST /projects/:id/features response.
 type FeaturePushReceipt struct {
 	ProjectID int64 `json:"project_id"`
-	Created   []struct {
+	// Status is "accepted" when the token has direct access on the project and
+	// the features went straight onto the board, "pending_review" when they
+	// wait in the Inbox. Empty from a server that predates the field, which
+	// always queued.
+	Status  string `json:"status"`
+	Created []struct {
 		ID             int64  `json:"id"`
 		AIFeatureID    string `json:"ai_feature_id"`
 		Name           string `json:"name"`

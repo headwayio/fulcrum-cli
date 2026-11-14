@@ -73,9 +73,18 @@ grep 'Nothing pushed' last-stdout.txt
 
 # Accepting appends and reports what the server committed.
 fulcrum -in accept.txt feature push --project 'Acme App' $WORK/draft.json
-grep 'created Swap react-datatables' last-stdout.txt
+grep 'created Swap react-datatables for react-drag-n-drop \(id 42\)' last-stdout.txt
 grep 'Development: M \(16h committed\)' last-stdout.txt
 grep 'Review in Fulcrum' last-stdout.txt
+grep 'Waiting in the Inbox' last-stdout.txt
+! grep 'On the board' last-stdout.txt
+
+# Where the token has direct access on the project, the push goes straight
+# onto the board and nothing is left to review.
+fulcrum feature push --project 'Fulcrum Dogfood' --yes $WORK/draft.json
+grep 'created Swap react-datatables' last-stdout.txt
+grep 'On the board in Fulcrum: https://fulcrum.test/projects/2' last-stdout.txt
+! grep 'Waiting in the Inbox' last-stdout.txt
 
 # --dry-run never contacts the server at all.
 fulcrum feature push --project 'Acme App' --dry-run $WORK/draft.json

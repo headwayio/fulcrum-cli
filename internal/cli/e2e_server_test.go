@@ -234,10 +234,40 @@ func newFixtureServer() *fixtureServer {
 				},
 			})
 		}
+		// The fixture token has direct access on project 2 only, so a push
+		// there goes onto the board and a push anywhere else waits.
+		status := "pending_review"
+		if id == 2 {
+			status = "accepted"
+		}
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]any{
-			"project_id": id, "created": created, "skipped": []any{}, "dropped": []any{},
+			"project_id": id, "status": status,
+			"created": created, "skipped": []any{}, "dropped": []any{},
 			"review_url": "https://fulcrum.test/projects/" + r.PathValue("id"),
+		})
+	})
+
+	// The hosted MCP endpoint, for the tools the feature commands call
+	// directly. One JSON-RPC request in, one out; a tool that refuses answers
+	// 200 with isError set, as the server does.
+	mux.HandleFunc("POST /mcp", func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+			Params struct {
+				Name      string         `json:"name"`
+				Arguments map[string]any `json:"arguments"`
+			} `json:"params"`
+		}
+		json.NewDecoder(r.Body).Decode(&request)
+		text, isError := fixtureTool(request.Params.Name, request.Params.Arguments)
+		json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0", "id": request.ID,
+			"result": map[string]any{
+				"content": []map[string]any{{"type": "text", "text": text}},
+				"isError": isError,
+			},
 		})
 	})
 
@@ -285,6 +315,50 @@ func newFixtureServer() *fixtureServer {
 
 	f.Server = httptest.NewServer(authed)
 	return f
+}
+
+// fixtureTool answers the MCP tools the feature commands call, echoing the
+// arguments it was given so a script can assert what the CLI sent.
+func fixtureTool(name string, arguments map[string]any) (string, bool) {
+	card, _ := arguments["feature"].(string)
+	if card == "NOPE-1" {
+		return `No card matching "NOPE-1" in Acme. Short ids look like FUL-17; use find_features to locate it.`, true
+	}
+	switch name {
+	case "get_feature":
+		return "# " + card + " — Mapping engine\n\n## Waiting for review\n\n" +
+			"None of this is part of the card yet — it takes effect only if it is accepted.\n\n" +
+			"**1 PRD suggestion** — call get_prd_suggestions to read it in full:\n\n" +
+			"- add to the requirements: First draft (sug-aaa111)", false
+	case "get_feature_prd":
+		if arguments["pending"] == true {
+			return "# Proposed product requirements — " + card + " Mapping engine\n\n" +
+				"Waiting for review: this is NOT on the card yet.\n\nMaps and validates fields.", false
+		}
+		return "# Product requirements — " + card + " Mapping engine\n\nMaps imported fields.", false
+	case "get_prd_suggestions":
+		if id, ok := arguments["suggestion"].(string); ok {
+			return "### " + id + " — pending (PRD chat) — add to the requirements\n\nWould add:\n\nThe whole draft.", false
+		}
+		return card + " requirement suggestions:\n\n### sug-aaa111 — pending (PRD chat) — add to the requirements\n\n" +
+			"Would add:\n\n## Overview", false
+	case "review_pending":
+		if card == "" {
+			project, _ := arguments["project"].(string)
+			return "Waiting for review on " + project + ":\n\nProposals in the Inbox (get_feature reads one):\n" +
+				"- **feature 42** Rewrite importer — pushed by dana", false
+		}
+		decision, _ := arguments["decision"].(string)
+		reason, _ := arguments["reason"].(string)
+		if card == "LOCKED-1" {
+			return "LOCKED-1 is locked. Accepting onto a locked card means unlocking it, which a person does in Fulcrum.", true
+		}
+		if suggestion, ok := arguments["suggestion"].(string); ok {
+			return decision + "ed the PRD suggestion " + suggestion + " on " + card + " (reason: " + reason + ")", false
+		}
+		return decision + "ed the proposal " + card + " (reason: " + reason + ")", false
+	}
+	return "unknown tool " + name, true
 }
 
 // resolveProposalStatus is the `srv apply|reject <id>` control surface.

@@ -13,7 +13,14 @@ func (a *App) featureCmd() *cobra.Command {
 		Use:   "feature",
 		Short: "Work with a project's features",
 	}
-	cmd.AddCommand(a.featurePushCmd())
+	cmd.AddCommand(
+		a.featurePushCmd(),
+		a.featureShowCmd(),
+		a.featureSuggestionsCmd(),
+		a.featurePendingCmd(),
+		a.featureReviewCmd("accept"),
+		a.featureReviewCmd("reject"),
+	)
 	return cmd
 }
 
@@ -27,6 +34,9 @@ func (a *App) featurePushCmd() *cobra.Command {
 			"APPEND ONLY. The server refuses every action but add, so a push can\n" +
 			"add work to a backlog and can never modify or remove work already\n" +
 			"there. An id that already exists is skipped, not overwritten.\n\n" +
+			"Where it lands is the token's standing on the project: with direct\n" +
+			"access (an admin grants it) the features go straight onto the board;\n" +
+			"without it they wait in the Inbox for somebody to accept them.\n\n" +
 			"The full payload is shown before anything is sent. Declining exits 0.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -110,7 +120,7 @@ func (a *App) runFeaturePush(path, projectRef string, yes, dryRun bool) error {
 	}
 
 	for _, created := range receipt.Created {
-		fmt.Fprintf(a.Stdout, "created %s\n", created.Name)
+		fmt.Fprintf(a.Stdout, "created %s (id %d)\n", created.Name, created.ID)
 		for _, est := range created.Estimates {
 			fmt.Fprintf(a.Stdout, "  %s: %s (%gh committed)\n", est.Role, est.Complexity, est.Hours)
 		}
@@ -124,7 +134,14 @@ func (a *App) runFeaturePush(path, projectRef string, yes, dryRun bool) error {
 		fmt.Fprintf(a.Stderr, "dropped: %s\n", dropped)
 	}
 	if len(receipt.Created) > 0 {
-		fmt.Fprintf(a.Stdout, "Review in Fulcrum: %s\n", receipt.ReviewURL)
+		if receipt.Status == "accepted" {
+			// The token has direct access on the project: nothing is waiting.
+			fmt.Fprintf(a.Stdout, "On the board in Fulcrum: %s\n", receipt.ReviewURL)
+		} else {
+			fmt.Fprintf(a.Stdout, "Review in Fulcrum: %s\n", receipt.ReviewURL)
+			fmt.Fprintln(a.Stdout, "Waiting in the Inbox. `fulcrum feature show <id>` reads one; with direct access on")
+			fmt.Fprintln(a.Stdout, "the project, `fulcrum feature accept <id> --reason ...` puts it on the board.")
+		}
 	}
 	if len(receipt.Dropped) > 0 {
 		return silentExit(ExitStale)

@@ -1,0 +1,47 @@
+# Reading a card and what is waiting for review on it, and deciding it, from
+# a terminal. Each command is one of the server's MCP tools called directly,
+# so the words are the server's and so is the gate.
+
+# The brief, with what is waiting shown apart from the card.
+fulcrum feature show FUL-17
+grep '^# FUL-17 — Mapping engine' last-stdout.txt
+grep '## Waiting for review' last-stdout.txt
+grep 'sug-aaa111' last-stdout.txt
+
+# The whole PRD, and the replacement a pending change proposes.
+fulcrum feature show FUL-17 --prd
+grep '^# Product requirements — FUL-17' last-stdout.txt
+fulcrum feature show FUL-17 --pending
+grep '^# Proposed product requirements — FUL-17' last-stdout.txt
+grep 'NOT on the card yet' last-stdout.txt
+
+# PRD suggestions, drafts included: all of them, or one in full by id.
+fulcrum feature suggestions FUL-17
+grep 'FUL-17 requirement suggestions' last-stdout.txt
+grep 'Would add' last-stdout.txt
+fulcrum feature suggestions FUL-17 sug-aaa111
+grep '^### sug-aaa111' last-stdout.txt
+grep 'The whole draft' last-stdout.txt
+
+# What is waiting across a project.
+fulcrum feature pending --project 'Acme App'
+grep 'Waiting for review on Acme App' last-stdout.txt
+grep 'Rewrite importer' last-stdout.txt
+
+# The review decision: a proposal, or one suggestion on a card.
+fulcrum feature accept 42 --reason 'Matches the code'
+grep 'accepted the proposal 42 \(reason: Matches the code\)' last-stdout.txt
+fulcrum feature accept FUL-17 --suggestion sug-aaa111 --reason 'Checked against the parser'
+grep 'accepted the PRD suggestion sug-aaa111 on FUL-17' last-stdout.txt
+fulcrum feature reject 42 --reason 'Duplicate of FUL-9'
+grep 'rejected the proposal 42 \(reason: Duplicate of FUL-9\)' last-stdout.txt
+
+# A decision needs its reason, and says so before any request is made.
+fulcrum -code 2 feature accept 42
+grep 'say why with --reason' last-stderr.txt
+
+# What the server refuses is printed as the server worded it, exit 2.
+fulcrum -code 2 feature show NOPE-1
+grep 'No card matching "NOPE-1"' last-stderr.txt
+fulcrum -code 2 feature accept LOCKED-1 --reason 'Looks right'
+grep 'LOCKED-1 is locked' last-stderr.txt
